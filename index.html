@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f4ed">
+  <title>다음 역 데이트</title>
+  <meta name="description" content="수도권 지하철에서 둘이 갈 역을 뽑고, 주변 놀거리와 식당, 카페로 데이트 코스를 만들어 보세요.">
+  <link rel="stylesheet" href="./style.css">
+  <link rel="modulepreload" href="./data/network.js">
+  <link rel="modulepreload" href="./data/shops.js">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">↗</span> 다음 역 데이트</div>
+    <span class="topbar-caption">수도권 전철</span>
+  </header>
+  <main>
+    <noscript><p>역을 뽑고 코스를 보려면 브라우저에서 자바스크립트를 켜 주세요.</p></noscript>
+    <section class="intro" aria-labelledby="title">
+      <div>
+        <h1 id="title">오늘은 어디서 내릴까?</h1>
+        <p>노선을 골라 둘이 갈 역을 뽑아보세요.</p>
+      </div>
+      <div class="draw-entry">
+        <button type="button" id="draw" class="primary" aria-describedby="draw-pool">오늘의 역 뽑기 <span aria-hidden="true">↗</span></button>
+        <p id="draw-pool" class="draw-pool" aria-live="polite"></p>
+        <button type="button" id="clear-place-condition" hidden>장소 후보 조건 해제</button>
+        <button type="button" id="open-settings" aria-haspopup="dialog">뽑기 설정</button>
+        <span id="active-draw-condition" hidden></span>
+      </div>
+    </section>
+    <div id="invalid-course-link" class="invalid-course-link" hidden>
+      <p role="status">공유 링크에 있는 역을 찾을 수 없어요.</p>
+      <a href="./">홈으로 돌아가기</a>
+    </div>
+    <form id="station-search" class="station-search" role="search">
+      <label for="station-query">역 이름으로 찾기</label>
+      <input id="station-query" type="search" placeholder="예: 안국, 양평역 5호선" autocomplete="off">
+      <div id="station-search-results" class="station-matches" hidden>
+        <p id="station-search-status" aria-live="polite"></p>
+        <ul id="station-matches"></ul>
+      </div>
+    </form>
+    <details id="saved-courses" class="saved-courses" hidden>
+      <summary>저장한 코스</summary>
+      <ul id="saved-course-list"></ul>
+    </details>
+    <section class="workspace" aria-label="노선도 탐색">
+      <div class="map-panel">
+        <div id="map-background" class="map-background" aria-hidden="true"></div>
+        <div class="map-title"><h2>수도권 노선도</h2><p id="map-count" aria-live="polite" aria-atomic="true"></p></div>
+        <svg id="map" tabindex="0" aria-label="수도권 전철 노선도" aria-describedby="map-count map-keyboard-hint"></svg>
+        <p id="empty" class="map-empty" hidden>노선을 켜면 지도에 표시돼요.</p>
+        <div class="map-controls" role="group" aria-label="노선도 확대 및 이동">
+          <button id="zoom-in" type="button" aria-label="확대">+</button>
+          <button id="zoom-out" type="button" aria-label="축소">−</button>
+          <button id="center-station" type="button" hidden>코스 역</button>
+          <button id="fit-seoul" type="button">서울 중심 확대</button>
+          <button id="fit-selected" type="button">선택 노선 보기</button>
+          <button id="fit" type="button" aria-describedby="map-count">전체 보기</button>
+        </div>
+        <a class="map-attribution" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors</a>
+        <p id="map-keyboard-hint" class="sr-only">지도에서는 방향키로 이동하고 더하기와 빼기 키로 확대하거나 축소할 수 있어요. Tab으로 역에 초점을 옮긴 뒤 방향키로 주변 역을 찾고 Enter로 코스를 열 수 있어요.</p>
+        <p class="map-hint">
+          <span id="map-hint">
+            <span class="map-hint-pointer">드래그해서 이동 · 역을 눌러 주변 보기</span>
+            <span class="map-hint-touch">두 손가락으로 확대 · 역을 눌러 주변 보기</span>
+          </span>
+          <span id="map-filter-hint" hidden>점선 테두리 역은 장소 조건으로 뽑기 제외</span>
+        </p>
+      </div>
+    </section>
+    <section id="result" class="result" aria-labelledby="station-name" hidden>
+      <div class="station-summary">
+        <h2 id="station-name" tabindex="-1"></h2>
+        <div id="station-lines" class="station-lines"></div>
+        <div id="station-line-preview" class="draw-pool" hidden>
+          <p id="station-line-preview-message"></p>
+          <button type="button" id="open-preview-line">노선 설정으로 이동</button>
+        </div>
+        <p id="station-stats" class="station-stats" aria-live="polite"></p>
+        <div id="course-overview" class="course-overview"></div>
+        <button type="button" id="course-pending" class="course-distance" hidden></button>
+        <p id="course-no-map" class="course-distance" hidden>선택한 장소의 좌표가 없어 코스 위치와 도보 구간을 표시할 수 없어요. 각 장소에서 네이버 지도를 열 수 있어요.</p>
+      </div>
+      <div class="result-actions">
+        <button type="button" id="share-course-primary">코스 공유</button>
+        <button type="button" id="show-station-on-map">노선도에서 역 보기</button>
+        <button type="button" id="draw-from-course" aria-describedby="course-draw-count">새 역 뽑기</button>
+        <p id="course-draw-count" class="draw-pool" hidden></p>
+        <div id="course-draw-unavailable" hidden>
+          <p id="course-draw-message" class="draw-pool"></p>
+          <button type="button" id="open-draw-filters">뽑기 설정으로 이동</button>
+        </div>
+        <div id="place-links" class="place-links"></div>
+        <div id="shared-course-actions" class="shared-course-actions" hidden>
+          <span>공유받은 코스 · 저장 전에는 이 기기의 저장본에 반영되지 않아요.</span>
+          <p id="shared-course-changes" hidden></p>
+          <button type="button" id="save-shared-course">받은 코스 저장</button>
+          <button type="button" id="open-local-course" hidden>내 저장본 열기</button>
+        </div>
+        <div id="updated-course-actions" class="shared-course-actions" hidden>
+          <span role="status">다른 탭에서 이 역의 저장 코스가 변경됐어요.</span>
+          <button type="button" id="open-updated-course">최신 코스 열기</button>
+        </div>
+        <details id="course-tools" class="course-tools">
+          <summary>공유 옵션</summary>
+          <p id="share-replacement-note" class="share-status" hidden>다시 공유하면 현재 화면의 코스가 전달돼요.</p>
+          <p id="share-omitted-note" class="share-status" hidden>뺀 장소는 공유 링크에 포함되지 않아요. 함께 보내려면 코스에 다시 추가하세요.</p>
+          <p id="share-custom-note" class="share-status" hidden></p>
+          <p id="share-local-note" class="share-status" hidden>이 링크는 현재 기기에서만 열 수 있어요. 다른 기기에 보내려면 네이버 지도 링크가 담긴 코스 텍스트를 복사하세요.</p>
+          <div>
+            <button type="button" id="share-device" hidden>공유 앱 열기</button>
+            <button type="button" id="share-station">코스 링크 복사</button>
+            <button type="button" id="copy-course" aria-describedby="course-overview">코스 텍스트 복사</button>
+          </div>
+        </details>
+        <span id="share-status" class="share-status" role="status" tabindex="-1"></span>
+      </div>
+      <div id="manual-copy" class="manual-copy" hidden>
+        <label id="manual-copy-label" for="manual-copy-value">복사할 내용</label>
+        <p id="manual-copy-hint">선택된 내용을 키보드 단축키나 길게 눌러 나타나는 메뉴로 복사하세요.</p>
+        <textarea id="manual-copy-value" aria-describedby="manual-copy-hint" rows="4" readonly></textarea>
+        <div class="manual-copy-actions">
+          <button type="button" id="select-manual-copy">전체 선택</button>
+          <button type="button" id="dismiss-manual-copy">복사란 닫기</button>
+        </div>
+      </div>
+      <details id="course-settings" class="course-settings">
+        <summary>코스 편집</summary>
+        <div class="course-order">
+          <label for="course-order">방문 순서</label>
+          <select id="course-order"></select>
+          <label for="course-radius">후보 거리</label>
+          <select id="course-radius" aria-describedby="station-stats">
+            <option value="">전체 거리</option>
+            <option value="300">직선 300m 이내</option>
+            <option value="500">직선 500m 이내</option>
+            <option value="800">직선 800m 이내</option>
+            <option value="1000">직선 1km 이내</option>
+          </select>
+          <button type="button" id="show-course-location" hidden>코스 위치 보기</button>
+          <button type="button" id="shortest-order" hidden>직선거리가 짧은 순서 적용</button>
+          <button type="button" id="undo-shortest-order" hidden>이전 방문 순서로 되돌리기</button>
+          <button type="button" id="reset-course">기본 코스로 되돌리기</button>
+          <span id="course-order-status" class="sr-only" role="status"></span>
+        </div>
+      </details>
+      <div id="course" class="course" aria-label="데이트 코스"></div>
+      <figure id="course-location" class="course-location" hidden>
+        <figcaption id="course-location-title" tabindex="-1">역과 장소 위치 <span>북쪽 ↑ · 좌표 기준</span></figcaption>
+        <svg id="course-map" role="img" aria-label="역과 선택한 장소의 상대 위치"></svg>
+        <ul id="course-map-legend"></ul>
+        <p id="course-map-missing" class="course-distance" hidden></p>
+      </figure>
+      <details id="course-walk" class="course-walk" hidden>
+        <summary id="course-walk-summary">구간별 도보 길찾기 (앱)</summary>
+        <ol id="course-walk-links"></ol>
+      </details>
+      <p id="course-distance" class="course-distance" aria-live="polite" hidden></p>
+    </section>
+  </main>
+  <dialog id="draw-settings" class="draw-settings" aria-labelledby="draw-settings-title">
+    <form method="dialog" class="settings-header">
+      <h2 id="draw-settings-title">뽑기 설정</h2>
+      <button type="submit" id="close-settings" autofocus>닫기</button>
+    </form>
+    <section aria-labelledby="place-settings-title">
+      <h3 id="place-settings-title">장소 후보 조건</h3>
+      <div class="draw-settings-options">
+        <label class="draw-option"><input type="checkbox" id="complete-course"> 놀거리·먹거리·카페 기본 후보가 있는 역만</label>
+        <label class="draw-option"><input type="checkbox" id="nearby-course"> 세 분류 모두 직선 800m 이내 후보가 있는 역만</label>
+      </div>
+    </section>
+    <section class="line-settings" aria-labelledby="line-filter-title">
+      <div class="filter-header">
+        <h3 id="line-filter-title" tabindex="-1">노선 선택</h3>
+        <span id="count" class="count"></span>
+      </div>
+      <div id="line-options">
+        <div class="filter-actions">
+          <button type="button" id="show-all">모두 켜기</button>
+          <button type="button" id="hide-all">모두 끄기</button>
+        </div>
+        <p id="line-coverage-key" class="line-coverage-key">놀거리·먹거리·카페가 모두 있는 역 / 전체 역</p>
+        <div id="lines" class="line-list" role="group" aria-label="표시할 노선"></div>
+      </div>
+    </section>
+  </dialog>
+  <dialog id="draw-reveal" class="draw-reveal" aria-labelledby="draw-status">
+    <div class="draw-ticket">
+      <div class="ticket-header">
+        <h2 id="draw-status">다음 역은…</h2>
+        <button type="button" id="dismiss-draw" autofocus aria-label="뽑기 닫기">×</button>
+      </div>
+      <div class="ticket-display">
+        <p id="draw-station" aria-hidden="true"></p>
+        <p id="draw-line" aria-hidden="true"></p>
+        <p id="draw-coverage" hidden></p>
+        <ul id="draw-places" class="draw-places" aria-label="추천 장소" hidden></ul>
+        <div id="draw-map-search" hidden></div>
+        <p id="draw-saved-course" class="draw-remaining" hidden></p>
+        <p id="draw-remaining" class="draw-remaining" hidden></p>
+        <p id="draw-origin" class="draw-remaining" hidden></p>
+      </div>
+      <div class="ticket-track" aria-hidden="true">
+        <span class="ticket-train"><span></span></span>
+        <span class="ticket-stop"></span>
+        <span class="ticket-arrival"></span>
+      </div>
+      <p id="draw-announcement" class="sr-only" aria-live="polite"></p>
+      <div id="recent-draws" class="recent-draws" hidden aria-label="이번에 뽑은 다른 역"></div>
+      <div class="ticket-actions">
+        <button type="button" id="skip-draw" class="primary" hidden>결과 바로 보기</button>
+        <button type="button" id="open-draw-result" class="primary" aria-describedby="draw-station draw-line draw-coverage"><span id="open-draw-result-label">코스 보기</span> <span aria-hidden="true">↗</span></button>
+        <button type="button" id="redraw" aria-describedby="draw-remaining" hidden>다시 뽑기</button>
+      </div>
+    </div>
+  </dialog>
+  <footer>
+    노선 데이터 <a href="https://github.com/minseok852/subway-etl#출처표시">subway-etl</a> ·
+    <a href="https://www.data.go.kr/data/15013205/standard.do">공공데이터포털</a> ·
+    <a href="https://data.seoul.go.kr/">서울교통공사·서울 열린데이터광장</a> ·
+    <a href="https://www.data.go.kr/data/15012890/standard.do">전국도시공원정보</a> ·
+    <a href="https://www.data.go.kr/data/15012894/standard.do">전국전통시장정보</a> ·
+    <a href="https://www.data.go.kr/data/15013109/standard.do">전국도서관표준데이터</a> ·
+    <a href="https://www.data.go.kr/data/15083033/fileData.do">소상공인시장진흥공단 상가정보</a>
+  </footer>
+</body>
+</html>
