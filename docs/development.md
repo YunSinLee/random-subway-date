@@ -4,7 +4,7 @@
 
 | 기능 | 현재 동작 |
 | --- | --- |
-| 역 뽑기 | 선택한 노선에서 역 하나를 같은 확률로 뽑습니다. 여러 노선이 지나는 역도 한 번만 포함합니다. 역 이름이 바뀌다가 당첨역에 멈추며, 모션 줄이기 설정에서는 결과를 바로 보여줍니다. |
+| 역 뽑기 | 선택한 노선에서 역 하나를 같은 확률로 뽑습니다. 여러 노선이 지나는 역도 한 번만 포함합니다. 대기 머신에 실제 후보 수를 표시하고 세로 릴이 감속한 뒤 당첨역과 선택 노선의 인접역을 보여줍니다. 모션 줄이기 설정에서는 결과를 바로 보여줍니다. |
 | 뽑기 설정 | 노선 선택과 장소 후보 조건을 모달에서 바꿀 수 있습니다. 장소 조건은 세 분류의 기본 후보가 있는 역 또는 세 분류 모두 직선 800m 안에 후보가 있는 역으로 좁힙니다. |
 | 노선도와 역 검색 | 25개 노선의 고유 역 659곳을 표시합니다. 노선은 역 좌표를 직선으로 이은 도식입니다. 배경은 OpenStreetMap 타일을 사용하며, 타일 요청에 실패해도 노선과 역은 표시됩니다. 확대·축소와 드래그, 두 손가락 조작, 키보드 이동을 지원합니다. |
 | 데이트 코스 | 놀거리·식당·카페 후보를 표시합니다. 후보와 방문 순서를 바꿀 수 있고, 후보 거리는 300m·500m·800m·1km 중에서 고를 수 있습니다. 버스나 셔틀이 필요한 장소는 이동 방법을 별도로 표시합니다. |
@@ -57,9 +57,11 @@ node scripts/check-data.cjs --coverage-gaps
 node scripts/check-data.cjs --app-coverage
 ```
 
-브라우저 검증에는 [README](../README.md#내-컴퓨터에서-실행하기)의 로컬 서버, Node.js와 npm, Google Chrome이 필요합니다. 테스트는 뽑기 연출, 장소 조건, 지도 조작, 코스 편집과 공유를 확인합니다. 기기 공유는 브라우저 API를 대역으로 검증합니다.
+브라우저 검증에는 [README](../README.md#내-컴퓨터에서-실행하기)의 로컬 서버, Node.js와 npm, Google Chrome이 필요합니다. 테스트는 뽑기 연출, 장소 조건, 지도 조작, 코스 편집과 공유를 확인합니다. 기기 공유는 브라우저 API를 대역으로 검증합니다. 기본 실행은 설치된 Chrome을 사용하며, 별도로 설치한 Playwright 번들 Chromium을 쓰려면 `PLAYWRIGHT_BROWSERS_PATH`와 `PLAYWRIGHT_USE_BUNDLED_CHROMIUM=1`을 지정합니다.
 
 ```sh
 npm install --prefix /tmp/subway-date-browser-check playwright
 NODE_PATH=/tmp/subway-date-browser-check/node_modules node scripts/check-browser.cjs
 ```
+
+번들 Chromium 예시: `NODE_PATH=/tmp/subway-date-browser-check/node_modules PLAYWRIGHT_BROWSERS_PATH=/tmp/subway-date-browser-check/browsers PLAYWRIGHT_USE_BUNDLED_CHROMIUM=1 node scripts/check-browser.cjs`

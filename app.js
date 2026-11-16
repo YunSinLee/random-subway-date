@@ -335,6 +335,23 @@ function refreshDrawPool() {
     label.classList.toggle('line-without-complete-course', matching === 0)
   }
   const count = pool.length
+  const selectedLines = [...lines.values()].filter((line) => enabled.has(line.id))
+  byId('scope-summary').textContent = enabled.size === lines.size ? '전체 노선' : `선택한 노선 ${enabled.size}개`
+  byId('scope-count').textContent = `후보 역 ${count}곳`
+  byId('machine-count').textContent = `${count} STATIONS`
+  byId('topbar-caption').textContent = `${enabled.size}개 노선 · ${count}개 역`
+  const tags = byId('scope-tags')
+  tags.replaceChildren(...selectedLines.slice(0, 4).map((line) => {
+    const item = document.createElement('li')
+    item.textContent = line.name
+    item.style.setProperty('--line', line.color)
+    return item
+  }))
+  if (selectedLines.length > 4) {
+    const more = document.createElement('li')
+    more.textContent = `+${selectedLines.length - 4}`
+    tags.append(more)
+  }
   const preview = lines.get(previewFor(selected))
   const previewNotice = byId('station-line-preview')
   const excludedByPlaces = selected && !preview && !pool.includes(selected)
@@ -1779,7 +1796,12 @@ function drawLine(station) {
 function showTicket(station, preview = false) {
   const line = drawLine(station)
   if (!preview) reveal.style.setProperty('--draw-color', line.color)
-  byId('draw-station').textContent = stationDisplayName(station)
+  const name = stationDisplayName(station)
+  byId('draw-station').textContent = name
+  byId('draw-station').style.setProperty('--chars', [...name].length)
+  const neighbors = line.edges.flatMap(([a, b]) => a === station.id ? [b] : b === station.id ? [a] : [])
+  byId('draw-prev').textContent = stations.get(neighbors[0]) ? stationDisplayName(stations.get(neighbors[0])) : ''
+  byId('draw-next').textContent = stations.get(neighbors[1]) ? stationDisplayName(stations.get(neighbors[1])) : ''
   byId('draw-line').textContent = line.name
 }
 
@@ -1839,9 +1861,14 @@ function refreshDrawCourseNotice(counts = courseCategories.map(([key, label]) =>
       if (!candidate) continue
       const item = document.createElement('li')
       const category = document.createElement('span')
+      category.className = 'draw-place-meta'
       category.textContent = label
       const name = document.createElement('strong')
       name.textContent = candidate[0]
+      const description = document.createElement('span')
+      description.className = 'draw-place-desc'
+      description.textContent = candidate[2] ? ` · ${candidate[2]}` : ''
+      category.append(description)
       item.append(category, name)
       if (candidate[8] === 'transit') {
         const access = document.createElement('small')
@@ -1853,7 +1880,7 @@ function refreshDrawCourseNotice(counts = courseCategories.map(([key, label]) =>
   }
   preview.hidden = !preview.childElementCount
   byId('draw-announcement').textContent = [
-    `${byId('draw-status').textContent}은 ${stationDisplayName(drawResult)}입니다.`,
+    `${reveal.dataset.history === 'true' ? '이전에 뽑은 역' : '오늘 내릴 역'}은 ${stationDisplayName(drawResult)}입니다.`,
     byId('draw-line').textContent,
     coverage.textContent,
     preview.hidden ? '' : [...preview.children].map((item) => [...item.children].map((part) => part.textContent).join(' ')).join(', '),
@@ -1892,7 +1919,13 @@ function showWinner(fromHistory = false) {
       lineLabel.append(row)
     }
   }
-  byId('draw-status').textContent = fromHistory ? '이전에 뽑은 역' : '오늘 내릴 역'
+  reveal.dataset.history = String(fromHistory)
+  const title = byId('draw-status').children
+  title[0].textContent = fromHistory ? '이전에 뽑은 역은' : '오늘 내릴 역은'
+  title[1].textContent = `${stationDisplayName(drawResult)}!`
+  byId('draw-lead').textContent = '이 역에서 둘만의 데이트를 시작해 보세요.'
+  byId('draw-caption').textContent = '우리의 다음 데이트가 기다리고 있어요.'
+  byId('open-draw-result-station').textContent = `${stationDisplayName(drawResult)} `
   reveal.classList.add('landed')
   byId('open-draw-result').disabled = false
   const eligible = eligibleStations().filter((station) => station !== drawOrigin)
@@ -1955,7 +1988,7 @@ function revealResult() {
   if (!reveal.open || !drawResult || reveal.classList.contains('landed')) return
   clearTimeout(drawTimer)
   drawTimer = null
-  for (const animation of byId('draw-station').getAnimations?.() ?? []) animation.cancel()
+  for (const animation of byId('draw-reel').getAnimations?.() ?? []) animation.cancel()
   const skip = byId('skip-draw')
   const moveFocus = document.activeElement === skip
   skip.hidden = true
@@ -2001,7 +2034,11 @@ function drawStation(previousWinner = null, trigger = null) {
   byId('draw-origin').hidden = true
   reveal.classList.remove('landed')
   reveal.style.removeProperty('--draw-color')
-  byId('draw-status').textContent = '다음 역은…'
+  byId('draw-status').children[0].textContent = '다음 역은…'
+  byId('draw-status').children[1].textContent = '어디일까?'
+  byId('draw-lead').textContent = '둘만의 목적지를 찾고 있어요.'
+  byId('draw-caption').textContent = '두근두근, 잠시만 기다려 주세요.'
+  byId('open-draw-result-station').textContent = ''
   if (!reveal.open) {
     recentDraws.length = 0
     reveal.returnValue = ''
@@ -2024,7 +2061,7 @@ function drawStation(previousWinner = null, trigger = null) {
   const previews = pool.length === 2 ? pool : pool.filter((station) => station !== drawResult)
   let lastPreview = null
   let unseenPreviews = [...previews]
-  const stationLabel = byId('draw-station')
+  const stationLabel = byId('draw-reel')
   function spin() {
     if (!reveal.open) return
     if (frame === delays.length) {
@@ -2037,7 +2074,7 @@ function drawStation(previousWinner = null, trigger = null) {
     lastPreview = unseenPreviews.splice(index, 1)[0]
     showTicket(lastPreview, true)
     stationLabel.animate?.([
-      { opacity: .58, transform: 'translateY(4px)' },
+      { opacity: .58, transform: 'translateY(32px)' },
       { opacity: 1, transform: 'translateY(0)' },
     ], { duration: Math.min(delays[frame], 140), easing: 'ease-out' })
     drawTimer = setTimeout(spin, delays[frame])
@@ -2056,7 +2093,7 @@ function nearbyCourseParams(station) {
 }
 
 function finishDraw() {
-  for (const animation of byId('draw-station').getAnimations?.() ?? []) animation.cancel()
+  for (const animation of byId('draw-reel').getAnimations?.() ?? []) animation.cancel()
   byId('skip-draw').hidden = true
   const winner = reveal.returnValue === 'course' ? drawResult : null
   clearTimeout(drawTimer)

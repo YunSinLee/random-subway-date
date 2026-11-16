@@ -35,7 +35,7 @@ async function chooseNextCandidate(page, key, label) {
 }
 
 async function main() {
-  const browser = await chromium.launch({ channel: 'chrome', args: ['--host-resolver-rules=MAP tile.openstreetmap.org ~NOTFOUND'] })
+  const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_USE_BUNDLED_CHROMIUM === '1' ? undefined : 'chrome', args: ['--host-resolver-rules=MAP tile.openstreetmap.org ~NOTFOUND'] })
   try {
     const page = await browser.newPage({
       viewport: { width: 390, height: 844 },
@@ -46,6 +46,22 @@ async function main() {
     await page.addInitScript(() => { Math.random = () => 0 })
     await page.goto(home)
 
+    const mobileCopy = await page.locator('main > .slot-screen .slot-copy').boundingBox()
+    const mobileMachine = await page.locator('main > .slot-screen .slot-machine').boundingBox()
+    const mobileScope = await page.locator('#scope-title').boundingBox()
+    assert.ok(mobileCopy.y + mobileCopy.height <= mobileMachine.y)
+    assert.ok(mobileMachine.y + mobileMachine.height <= mobileScope.y)
+    assert.equal(Math.round(mobileMachine.width), 336)
+    await page.setViewportSize({ width: 1440, height: 1000 })
+    const desktopCopy = await page.locator('main > .slot-screen .slot-copy').boundingBox()
+    const desktopStage = await page.locator('main > .slot-screen .slot-stage').boundingBox()
+    const desktopMachine = await page.locator('main > .slot-screen .slot-machine').boundingBox()
+    assert.equal(Math.round(desktopCopy.width), 480)
+    assert.equal(Math.round(desktopStage.width), 656)
+    assert.equal(Math.round(desktopMachine.width), 420)
+    assert.ok(desktopCopy.x + desktopCopy.width < desktopStage.x)
+    await page.setViewportSize({ width: 390, height: 844 })
+
     assert.ok(await page.locator('#line-options').isHidden())
     await openDrawSettings(page)
     assert.ok(await page.locator('#draw-settings').evaluate((dialog) => dialog.matches(':modal')))
@@ -55,10 +71,20 @@ async function main() {
     await openDrawSettings(page)
     await page.locator('#hide-all').click()
     assert.ok(await page.locator('#draw').isDisabled())
+    assert.equal(await page.locator('#scope-count').innerText(), '후보 역 0곳')
+    assert.equal(await page.locator('#machine-count').textContent(), '0 STATIONS')
     await openDrawSettings(page)
     await page.locator('#show-all').click()
     const allStations = await page.locator('.station:visible').count()
     assert.equal(allStations, expectedCoverage.stations)
+    assert.equal(await page.locator('#scope-count').innerText(), `후보 역 ${allStations}곳`)
+    assert.equal(await page.locator('#machine-count').textContent(), `${allStations} STATIONS`)
+    assert.equal(await page.locator('#scope-summary').innerText(), '전체 노선')
+    assert.equal(await page.locator('#scope-tags li').count(), 5)
+    for (const asset of ['pixel-subway.svg', 'pixel-train.svg', 'pixel-heart.svg', 'pixel-lever.svg', 'fonts/Pretendard-Regular.subset.woff2', 'fonts/Pretendard-Bold.subset.woff2', 'fonts/PressStart2P-Regular.woff2']) {
+      assert.ok((await page.request.get(new URL(`/assets/${asset}`, page.url()).href)).ok(), asset)
+    }
+    assert.equal(await page.evaluate(() => document.fonts.ready.then(() => document.fonts.status)), 'loaded')
     const lineCounts = await page.locator('#lines .line-coverage').evaluateAll((nodes) =>
       Object.fromEntries(nodes.map((node) => [node.id.slice('line-coverage-'.length), node.textContent])))
     assert.deepEqual(lineCounts, Object.fromEntries(Object.entries(expectedCoverage.byLine).map(([id, coverage]) =>
@@ -71,6 +97,7 @@ async function main() {
     await page.getByLabel('놀거리·먹거리·카페 기본 후보가 있는 역만').check()
     const filteredStations = Number((await page.locator('#draw-pool').innerText()).match(/^\d+/)[0])
     assert.equal(filteredStations, expectedCoverage.complete)
+    assert.equal(await page.locator('#scope-count').innerText(), `후보 역 ${filteredStations}곳`)
     const excludedMarkers = page.locator('#map .station[aria-description="뽑기 후보 아님 (장소 후보 조건)"]')
     assert.equal(await excludedMarkers.count(), allStations - filteredStations)
     await openDrawSettings(page)
@@ -93,7 +120,7 @@ async function main() {
     assert.equal(await dialog.locator('#draw-announcement').textContent(), '역을 뽑는 중이에요.')
     assert.equal(await dialog.locator('#draw-station').getAttribute('aria-hidden'), 'true')
     const progressTrack = dialog.locator('.ticket-track')
-    assert.equal(await progressTrack.evaluate((track) => getComputedStyle(track, '::before').animationName), 'track-progress')
+    assert.ok(await dialog.locator('#draw-reel').evaluate((reel) => reel.getAnimations().length > 0))
     const firstFrame = await page.locator('#draw-station').innerText()
     const skipButton = dialog.getByRole('button', { name: '결과 바로 보기' })
     const firstSkipPosition = await skipButton.boundingBox()
@@ -106,13 +133,12 @@ async function main() {
       const station = document.querySelector('#draw-station')
       return station.getAttribute('aria-hidden') === 'true' && !names.includes(station.textContent)
     }, [firstFrame, secondFrame])
-    await dialog.getByRole('heading', { name: '오늘 내릴 역' }).waitFor()
+    await dialog.getByRole('heading', { name: /^오늘 내릴 역은/ }).waitFor()
     assert.equal(await dialog.locator('#draw-station').getAttribute('aria-hidden'), null)
     assert.match(await dialog.evaluate((ticket) => ticket.style.getPropertyValue('--draw-color')), /^#/)
     assert.ok(await dialog.locator('#draw-line').evaluate((line) => {
       const marker = getComputedStyle(line.querySelector('.draw-transfer-line') ?? line, '::before')
-      const train = getComputedStyle(document.querySelector('.ticket-train'))
-      return marker.content === '""' && marker.backgroundColor === train.backgroundColor
+      return marker.content === '""' && marker.backgroundColor !== 'rgba(0, 0, 0, 0)'
     }))
     const trainAtStop = await dialog.locator('.ticket-track').evaluate((track) => {
       const train = track.querySelector('.ticket-train')
@@ -120,15 +146,14 @@ async function main() {
       return Math.abs(train.getBoundingClientRect().right - stop.getBoundingClientRect().right) < 1
     })
     assert.ok(trainAtStop)
-    assert.equal(await progressTrack.locator('.ticket-stop').evaluate((stop) =>
-      getComputedStyle(stop).backgroundColor === getComputedStyle(stop).borderTopColor), true)
-    assert.equal(await progressTrack.evaluate((track) => getComputedStyle(track, '::before').transform), 'matrix(1, 0, 0, 1, 0, 0)')
+    assert.equal(await progressTrack.locator('.ticket-stop').evaluate((stop) => getComputedStyle(stop).backgroundColor), 'rgb(241, 132, 86)')
     assert.equal(await progressTrack.locator('.ticket-arrival').evaluate((ring) =>
       getComputedStyle(ring).animationName), 'arrival-ring')
     assert.match(await dialog.locator('#draw-coverage').innerText(), /^놀거리 [1-9]\d*곳 · 먹거리 [1-9]\d*곳 · 카페 [1-9]\d*곳$/)
     const stationMap = dialog.getByRole('link', { name: '역 위치 네이버 지도에서 보기' })
     assert.ok(await stationMap.isVisible())
     const drawnName = await dialog.locator('#draw-station').innerText()
+    assert.equal(await dialog.locator('#draw-station').evaluate((node) => node.style.getPropertyValue('--chars')), String([...drawnName].length))
     assert.ok(decodeURI(await stationMap.getAttribute('href')).includes(drawnName))
     assert.ok(await dialog.locator('#draw-saved-course').isHidden())
     assert.equal(await dialog.getByRole('button', { name: '코스 보기' }).getAttribute('aria-describedby'), 'draw-station draw-line draw-coverage')
@@ -621,13 +646,13 @@ async function main() {
     await drawPage.keyboard.press('Tab')
     assert.equal(await drawPage.locator(':focus').getAttribute('id'), 'skip-draw')
     await drawPage.keyboard.press('Enter')
-    await drawPage.getByRole('heading', { name: '오늘 내릴 역' }).waitFor()
+    await drawPage.getByRole('heading', { name: /^오늘 내릴 역은/ }).waitFor()
     assert.equal(await drawPage.locator(':focus').getAttribute('id'), 'open-draw-result')
     const confirmedWinner = await drawPage.locator('#draw-station').innerText()
     assert.equal(confirmedWinner, firstPreview)
     assert.equal(await drawPage.locator('#draw-station').evaluate((label) => getComputedStyle(label).animationName), 'station-arrival')
     assert.equal(await drawPage.locator('#draw-line').evaluate((label) => getComputedStyle(label).animationName), 'station-arrival')
-    assert.equal(await drawPage.locator('.ticket-display').evaluate((display) => getComputedStyle(display).animationName), 'none')
+    assert.equal(await drawPage.locator('#draw-reveal .ticket-display').evaluate((display) => getComputedStyle(display).animationName), 'none')
     const fits = await drawPage.locator('.ticket-actions').evaluate((actions) => actions.scrollWidth === actions.clientWidth)
     assert.ok(fits)
     for (const id of ['dismiss-draw', 'open-draw-result', 'redraw']) {
@@ -664,7 +689,7 @@ async function main() {
     await drawPage.keyboard.press('Enter')
     assert.equal(await drawPage.locator(':focus').getAttribute('id'), 'dismiss-draw')
     assert.equal(await drawPage.locator('#draw-reveal').evaluate((dialog) => dialog.scrollTop), 0)
-    await drawPage.getByRole('heading', { name: '오늘 내릴 역' }).waitFor()
+    await drawPage.getByRole('heading', { name: /^오늘 내릴 역은/ }).waitFor()
     assert.ok(await drawPage.locator('#skip-draw').isHidden())
     assert.notEqual(await drawPage.locator('#draw-station').innerText(), penultimateWinner)
     assert.match(await drawPage.locator('#draw-remaining').innerText(), /모든 후보 역을 한 번씩/)
@@ -677,7 +702,7 @@ async function main() {
     const recentBounds = await recentDraw.boundingBox()
     assert.ok(recentBounds && recentBounds.height >= 44 && recentBounds.width >= 44)
     await recentDraw.tap()
-    await drawPage.getByRole('heading', { name: '이전에 뽑은 역' }).waitFor()
+    await drawPage.getByRole('heading', { name: /^이전에 뽑은 역은/ }).waitFor()
     assert.match(await drawPage.locator('#draw-announcement').textContent(), /이전에 뽑은 역은/)
     assert.notEqual(await drawPage.locator('#draw-station').innerText(), lastWinner)
     const historyName = await drawPage.locator('#draw-station').innerText()
@@ -702,7 +727,7 @@ async function main() {
     await drawPage.keyboard.press('Escape')
     await drawPage.waitForFunction(() => document.activeElement.id === 'draw')
     assert.ok(await drawPage.locator('#draw-reveal').isHidden())
-    assert.equal(await drawPage.locator('#draw-station').evaluate((label) => label.getAnimations().length), 0)
+    assert.equal(await drawPage.locator('#draw-reel').evaluate((label) => label.getAnimations().length), 0)
     await drawPage.locator('#draw').click()
     const skip = drawPage.getByRole('button', { name: '결과 바로 보기' })
     await skip.focus()
@@ -710,17 +735,17 @@ async function main() {
     await openCourse.waitFor({ timeout: 1000 })
     assert.equal(await drawPage.locator('#draw-station').evaluate((label) => getComputedStyle(label).animationName), 'none')
     assert.equal(await drawPage.locator('#draw-line').evaluate((label) => getComputedStyle(label).animationName), 'none')
-    const reducedTrack = drawPage.locator('.ticket-track')
+    const reducedTrack = drawPage.locator('#draw-reveal .ticket-track')
     assert.deepEqual(await reducedTrack.evaluate((track) => {
       const progress = getComputedStyle(track, '::before')
-      return [progress.animationName, progress.transform, track.querySelector('.ticket-train').getAnimations().length]
-    }), ['none', 'matrix(1, 0, 0, 1, 0, 0)', 0])
+      return [progress.animationName, track.querySelector('.ticket-train').getAnimations().length]
+    }), ['none', 0])
     assert.ok(await skip.isHidden())
     assert.equal(await drawPage.locator(':focus').getAttribute('id'), 'open-draw-result')
     await openCourse.click()
     await drawPage.locator('#result').waitFor()
     await drawPage.evaluate(() => {
-      const label = document.querySelector('#draw-station')
+      const label = document.querySelector('#draw-reel')
       label.animate = undefined
       label.getAnimations = undefined
     })
