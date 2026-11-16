@@ -1787,9 +1787,26 @@ stationSearch.addEventListener('submit', (event) => {
 const reveal = byId('draw-reveal')
 const motionPreference = matchMedia('(prefers-reduced-motion: reduce)')
 const leverCancels = []
+const leverVisualResets = []
 for (const lever of [byId('draw'), byId('redraw')]) {
+  const scene = lever.querySelector('.lever-scene')
   let pointer = null
   let allowClick = true
+  let accepted = null
+  let animation = null
+  function resetVisual() {
+    if (animation) { animation.cancel(); animation = null }
+    scene.style.removeProperty('--lever-pull')
+  }
+  function animateLever(q, pull, duration = 180) {
+    resetVisual()
+    if (motionPreference.matches || typeof scene.animate !== 'function' || typeof CSS.registerProperty !== 'function') return
+    const frames = pull
+      ? [{ '--lever-pull': q }, { '--lever-pull': 0 }]
+      : [{ '--lever-pull': q, offset: 0, easing: 'cubic-bezier(.2,.65,.35,1)' }, { '--lever-pull': 1, offset: 100 / 280, easing: 'cubic-bezier(.2,.65,.35,1)' }, { '--lever-pull': 0, offset: 1 }]
+    animation = scene.animate(frames, { duration: pull ? duration : 280, easing: pull ? 'cubic-bezier(.2,.65,.35,1)' : 'linear' })
+    animation.onfinish = () => { animation = null; scene.style.removeProperty('--lever-pull') }
+  }
   function cancel() {
     if (pointer) {
       const id = pointer.id
@@ -1797,18 +1814,22 @@ for (const lever of [byId('draw'), byId('redraw')]) {
       allowClick = false
       if (lever.hasPointerCapture(id)) lever.releasePointerCapture(id)
     }
-    lever.style.removeProperty('--pull')
+    accepted = null
+    resetVisual()
   }
   leverCancels.push(cancel)
+  leverVisualResets.push(resetVisual)
   lever.addEventListener('pointerdown', (event) => {
     if (lever.disabled || !event.isPrimary || event.button !== 0) return
+    resetVisual()
+    accepted = null
     pointer = { id: event.pointerId, x: event.clientX, y: event.clientY }
     allowClick = true
     lever.setPointerCapture(event.pointerId)
   })
   lever.addEventListener('pointermove', (event) => {
     if (!pointer || pointer.id !== event.pointerId) return
-    lever.style.setProperty('--pull', `${Math.max(0, Math.min(20, event.clientY - pointer.y))}px`)
+    if (!motionPreference.matches && typeof scene.animate === 'function' && typeof CSS.registerProperty === 'function') scene.style.setProperty('--lever-pull', Math.max(0, Math.min(1, (event.clientY - pointer.y) / 20)))
   })
   lever.addEventListener('pointerup', (event) => {
     if (!pointer || pointer.id !== event.pointerId) return
@@ -1816,10 +1837,12 @@ for (const lever of [byId('draw'), byId('redraw')]) {
     const y = event.clientY - pointer.y
     const tap = Math.hypot(x, y) <= 6
     const pull = y >= 12 && y > Math.abs(x)
+    const q = Math.max(0, Math.min(1, y / 20))
     allowClick = tap || pull
+    accepted = allowClick ? { q, pull } : null
     pointer = null
-    lever.style.removeProperty('--pull')
-    if (lever.disabled) allowClick = false
+    if (lever.disabled) { allowClick = false; accepted = null; resetVisual() }
+    else if (!allowClick) animateLever(q, true, 140)
     else if (event.pointerType === 'touch' && pull && !tap) {
       allowClick = false
       lever.click()
@@ -1827,18 +1850,35 @@ for (const lever of [byId('draw'), byId('redraw')]) {
   })
   for (const type of ['pointercancel', 'lostpointercapture']) {
     lever.addEventListener(type, (event) => {
-      if (pointer && pointer.id === event.pointerId) cancel()
+      if (pointer && pointer.id === event.pointerId) {
+        const q = Number(getComputedStyle(scene).getPropertyValue('--lever-pull')) || 0
+        cancel()
+        animateLever(q, true, 140)
+      }
     })
   }
   lever.addEventListener('click', (event) => {
-    if (event.detail && !allowClick) event.stopImmediatePropagation()
+    if (event.detail && !allowClick) { event.stopImmediatePropagation(); return }
+    const input = accepted ?? { q: 0, pull: false }
+    accepted = null
+    if (lever.id === 'draw') drawStation(null, lever)
+    else {
+      drawing = false
+      byId('dismiss-draw').focus()
+      drawStation(recentDraws[0])
+    }
+    if (reveal.open && drawResult && !motionPreference.matches) {
+      byId('redraw').dispatchEvent(new CustomEvent('lever-feedback', { detail: input }))
+    }
   }, true)
+  lever.addEventListener('lever-feedback', (event) => animateLever(event.detail.q, event.detail.pull))
 }
 function cancelLevers() { leverCancels.forEach((cancel) => cancel()) }
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') cancelLevers()
 })
 motionPreference.addEventListener('change', (event) => {
+  leverVisualResets.forEach((reset) => reset())
   if (event.matches) revealResult()
 })
 
@@ -2173,11 +2213,6 @@ function finishDraw() {
   drawOrigin = null
 }
 
-byId('redraw').addEventListener('click', () => {
-  drawing = false
-  byId('dismiss-draw').focus()
-  drawStation(recentDraws[0])
-})
 byId('skip-draw').addEventListener('click', revealResult)
 byId('open-draw-result').addEventListener('click', () => reveal.close('course'))
 byId('dismiss-draw').addEventListener('click', () => reveal.close())
@@ -2392,7 +2427,6 @@ byId('open-settings').addEventListener('click', () => drawSettings.showModal())
 
 byId('show-all').addEventListener('click', () => setAll(true))
 byId('hide-all').addEventListener('click', () => setAll(false))
-byId('draw').addEventListener('click', (event) => drawStation(null, event.currentTarget))
 byId('draw-from-course').addEventListener('click', (event) => drawStation(selected, event.currentTarget))
 for (const id of ['complete-course', 'nearby-course']) {
   byId(id).addEventListener('change', () => {

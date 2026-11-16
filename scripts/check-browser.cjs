@@ -12,6 +12,7 @@ const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(new URL(home).host
 const localDescription = loopback ? ' share-local-note' : ''
 
 async function openDrawSettings(page) {
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent)
   if (await page.locator('#draw-settings').isHidden()) await page.locator('#open-settings').click()
 }
 
@@ -20,6 +21,7 @@ async function closeDrawSettings(page) {
 }
 
 async function openCourseSettings(page) {
+  await page.locator('#result').waitFor({ state: 'visible' })
   const settings = page.locator('#course-settings')
   if (await settings.getAttribute('open') === null) await settings.locator('summary').click()
 }
@@ -71,6 +73,7 @@ async function recordMotion(browser, viewport) {
   const page = await browser.newPage({ viewport, reducedMotion: 'no-preference' })
   await page.addInitScript(() => { Math.random = () => 0 })
   await page.goto(home)
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent)
   await page.evaluate(() => document.fonts.ready)
   await page.locator('#draw').click()
   await page.locator('#draw-reveal').waitFor()
@@ -138,6 +141,7 @@ async function recordMotion(browser, viewport) {
 async function checkOutsideTouchScroll(browser) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })
   await page.goto(home)
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent)
   const session = await page.context().newCDPSession(page)
   await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 15, y: 700 }] })
   for (const y of [620, 540, 460, 380, 300]) {
@@ -155,6 +159,7 @@ async function checkTwoCandidateMotion(browser) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' })
   await page.addInitScript(() => { Math.random = () => 0 })
   await page.goto(home)
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent)
   await openDrawSettings(page)
   await page.locator('#hide-all').click()
   await page.getByRole('checkbox', { name: 'GTX-A', exact: true }).check()
@@ -192,6 +197,7 @@ async function checkMultiTouchLevers(browser) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, reducedMotion: 'reduce' })
   await page.addInitScript(() => { window.randomCalls = 0; Math.random = () => { window.randomCalls += 1; return 0 } })
   await page.goto(home)
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent)
   await page.evaluate(() => document.fonts.ready)
   const touch = await page.context().newCDPSession(page)
   for (const id of ['draw', 'redraw']) {
@@ -223,6 +229,7 @@ async function checkMultiTouchLevers(browser) {
 async function checkLongWinnerShort(browser) {
   const page = await browser.newPage({ viewport: { width: 280, height: 240 }, reducedMotion: 'no-preference' })
   await page.goto(home)
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent)
   await page.evaluate(() => document.fonts.ready)
   await page.evaluate(async () => {
     const stations = (await import('./data/network.js')).default.stations
@@ -275,6 +282,7 @@ async function checkLever(browser) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, reducedMotion: 'reduce' })
   await page.addInitScript(() => { window.randomCalls = 0; Math.random = () => { window.randomCalls += 1; return 0 } })
   await page.goto(home)
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent)
   const lever = page.locator('#draw')
   const dialog = page.locator('#draw-reveal')
   const count = () => page.evaluate(() => window.randomCalls)
@@ -369,10 +377,247 @@ async function checkLever(browser) {
   await page.close()
 }
 
+async function checkLeverGeometry(browser, viewport) {
+  const page = await browser.newPage({ viewport, reducedMotion: 'no-preference' })
+  await page.goto(home)
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent)
+  await page.evaluate(() => document.fonts.ready)
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent && !document.querySelector('#draw').disabled)
+  const dir = `/tmp/subway-lever-motion-${viewport.width}x${viewport.height}`
+  fs.mkdirSync(dir, { recursive: true })
+  const geometry = (selector) => page.locator(selector).evaluate((button) => {
+    const scene = button.querySelector('.lever-scene')
+    const mount = scene.querySelector('.lever-mount')
+    const arm = scene.querySelector('.lever-arm')
+    const grip = scene.querySelector('.lever-grip')
+    const rect = (node) => node.getBoundingClientRect().toJSON()
+    const style = getComputedStyle(scene)
+    const matrix = new DOMMatrix(getComputedStyle(arm).transform)
+    const scale = parseFloat(style.width) / 28
+    const point = matrix.transformPoint(new DOMPoint(0, 0, 0))
+    return { pivotProjection: { x: rect(scene).left + 14 * scale + point.x, y: rect(scene).top + 80 * scale + point.y }, button: rect(button), scene: rect(scene), mount: rect(mount), arm: rect(arm), grip: rect(grip), q: Number(style.getPropertyValue('--lever-pull')), perspective: parseFloat(style.perspective), origin: style.perspectiveOrigin, transformOrigin: getComputedStyle(arm).transformOrigin, mountTransform: getComputedStyle(mount).transform, m23: matrix.m23, m32: matrix.m32, scale }
+  })
+  const snapshot = async (id, name) => {
+    const box = await page.locator(`#${id}`).boundingBox()
+    const x = Math.max(0, box.x - 24), y = Math.max(0, box.y - 24)
+    await page.screenshot({ path: `${dir}/${id}-${name}-close.png`, clip: { x, y, width: Math.min(viewport.width - x, box.width + 48), height: Math.min(viewport.height - y, box.height + 48) } })
+    await page.screenshot({ path: `${dir}/${id}-${name}.png` })
+  }
+  const data = {}
+  for (const id of ['draw', 'redraw']) {
+    const lever = page.locator(`#${id}`)
+    await lever.scrollIntoViewIfNeeded()
+    if (id === 'redraw') await page.locator('#draw-reveal').evaluate((dialog) => { dialog.scrollTop = 0 })
+    const box = await lever.boundingBox(), x = box.x + box.width / 2, y = box.y + 24
+    const samples = []
+    samples.push(await geometry(`#${id}`)); await snapshot(id, 'idle')
+    await page.mouse.move(x, y); await page.mouse.down()
+    await page.mouse.move(x, y + 10); samples.push(await geometry(`#${id}`)); await snapshot(id, 'mid-pull')
+    await page.mouse.move(x, y + 20); samples.push(await geometry(`#${id}`)); await snapshot(id, 'full-pull')
+    for (const sample of samples) {
+      for (const part of ['button', 'scene', 'mount']) for (const edge of ['left', 'right', 'top', 'bottom']) assert.ok(Math.abs(sample[part][edge] - samples[0][part][edge]) <= .5, `${id} ${part} ${edge}`)
+      const px = sample.mount.left + 10 * sample.scale, py = sample.mount.top + 9 * sample.scale
+      assert.ok(Math.abs((sample.arm.left + sample.arm.right) / 2 - px) < .5 && Math.abs(sample.arm.bottom - py) < .5, `${id} pivot`)
+      assert.ok(Math.abs(sample.pivotProjection.x - px) < .5 && Math.abs(sample.pivotProjection.y - py) < .5, `${id} matrix pivot`)
+      const origin = sample.origin.split(' ').map(parseFloat)
+      assert.ok(Math.abs(origin[0] - 14 * sample.scale) < .1 && Math.abs(origin[1] - 80 * sample.scale) < .1)
+      const armOrigin = sample.transformOrigin.split(' ').map(parseFloat)
+      assert.ok(Math.abs(armOrigin[0] - 3 * sample.scale) < .1 && Math.abs(armOrigin[1] - 64 * sample.scale) < .1)
+      assert.ok(Math.abs(sample.perspective - 240 * sample.scale) < .1 && sample.mountTransform === 'none')
+      assert.ok(Math.abs(sample.m23) > .1 && Math.abs(sample.m32) > .1)
+    }
+    assert.ok(samples[2].grip.width / samples[0].grip.width >= 1.2, `${id} ${JSON.stringify(samples)}`)
+    assert.ok(samples[2].arm.height < samples[0].arm.height * .55)
+    assert.ok(Math.abs(samples[2].m23) > Math.abs(samples[0].m23))
+    for (const [i, expectedY] of [13.67, 22.11, 45.58].entries()) {
+      const sample = samples[i]
+      assert.ok(Math.abs((sample.grip.top + sample.grip.bottom) / 2 - sample.scene.top - expectedY * sample.scale) < 1)
+    }
+    await page.evaluate((target) => {
+      window.leverFrames = []
+      const scene = document.querySelector(target + ' .lever-scene')
+      const start = performance.now()
+      window.leverDone = new Promise((resolve) => {
+        function frame(now) {
+          const arm = scene.querySelector('.lever-arm'), grip = scene.querySelector('.lever-grip')
+          window.leverFrames.push({ t: now - start, q: Number(getComputedStyle(scene).getPropertyValue('--lever-pull')), button: scene.parentElement.getBoundingClientRect().toJSON(), scene: scene.getBoundingClientRect().toJSON(), mount: scene.querySelector('.lever-mount').getBoundingClientRect().toJSON(), arm: arm.getBoundingClientRect().toJSON(), grip: grip.getBoundingClientRect().toJSON() })
+          if (now - start < 350) requestAnimationFrame(frame); else resolve()
+        }
+        requestAnimationFrame(frame)
+      })
+    }, `#${id}`)
+    const cdp = await page.context().newCDPSession(page)
+    const captures = []
+    cdp.on('Page.screencastFrame', ({ data, metadata, sessionId }) => {
+      captures.push({ data, time: metadata.timestamp * 1000 })
+      cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {})
+    })
+    await cdp.send('Page.startScreencast', { format: 'png', everyNthFrame: 1 })
+    const releaseTime = Date.now()
+    if (id === 'draw') await lever.dispatchEvent('pointercancel', { pointerId: 1, isPrimary: true })
+    await page.mouse.up()
+    const frames = await page.evaluate(async () => { await window.leverDone; return window.leverFrames })
+    await cdp.send('Page.stopScreencast')
+    await cdp.detach()
+    const returning = captures.filter((frame) => frame.time > releaseTime && frame.time < releaseTime + 150)
+      .sort((a, b) => Math.abs(a.time - releaseTime - 50) - Math.abs(b.time - releaseTime - 50))[0]
+    assert.ok(returning, `${id} return screenshot`)
+    fs.writeFileSync(`${dir}/${id}-return.png`, Buffer.from(returning.data, 'base64'))
+    const returnBox = await lever.boundingBox()
+    const crop = await page.evaluate(async ({ data, x, y, width, height }) => {
+      const image = new Image()
+      image.src = 'data:image/png;base64,' + data
+      await image.decode()
+      const canvas = document.createElement('canvas')
+      canvas.width = width; canvas.height = height
+      canvas.getContext('2d').drawImage(image, x, y, width, height, 0, 0, width, height)
+      return canvas.toDataURL('image/png').split(',')[1]
+    }, { data: returning.data, x: Math.max(0, returnBox.x - 24), y: Math.max(0, returnBox.y - 24), width: Math.min(viewport.width - Math.max(0, returnBox.x - 24), returnBox.width + 48), height: Math.min(viewport.height - Math.max(0, returnBox.y - 24), returnBox.height + 48) })
+    fs.writeFileSync(`${dir}/${id}-return-close.png`, Buffer.from(crop, 'base64'))
+    await snapshot(id, 'settled')
+    assert.ok(frames.some((frame) => frame.q > .1 && frame.q < .95), `${id} natural return`)
+    assert.ok(frames.at(-1).q < .01, `${id} settled`)
+    for (const frame of frames) {
+      for (const part of ['button', 'scene', 'mount']) for (const edge of ['left', 'right', 'top', 'bottom']) assert.ok(Math.abs(frame[part][edge] - frames[0][part][edge]) < .5, `${id} return ${part} ${edge}`)
+      assert.ok(Math.abs(frame.arm.bottom - (frame.mount.top + 9 * samples[0].scale)) < .5 && Math.abs((frame.arm.left + frame.arm.right) / 2 - (frame.mount.left + 10 * samples[0].scale)) < .5, `${id} return pivot`)
+    }
+    if (id === 'redraw') {
+      assert.ok(await lever.isDisabled())
+      assert.ok(Math.max(...frames.map((frame) => frame.grip.width)) / frames.at(-1).grip.width >= 1.18, 'disabled lever keeps perspective')
+    }
+    data[id] = { samples, frames }
+    if (id === 'draw') {
+      await lever.click()
+      await page.locator('#skip-draw').click()
+      await page.waitForFunction(() => !document.querySelector('#redraw').disabled)
+    }
+  }
+  fs.writeFileSync(`${dir}/geometry.json`, JSON.stringify(data, null, 2))
+  await page.close()
+}
+
+async function checkLeverFeedback(browser) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, reducedMotion: 'no-preference' })
+  await page.goto(home)
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent)
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent)
+  for (const input of ['click', 'tap', 'Enter', 'Space']) {
+    const lever = page.locator('#draw')
+    await lever.scrollIntoViewIfNeeded()
+    if (input === 'Enter' || input === 'Space') await lever.focus()
+    await page.evaluate(() => {
+      window.feedbackFrames = []
+      document.querySelector('#draw').addEventListener('click', () => {
+        const scene = document.querySelector('#redraw .lever-scene'), start = performance.now()
+        window.feedbackDone = new Promise((resolve) => {
+          function frame(now) {
+            window.feedbackFrames.push({ t: now - start, q: Number(getComputedStyle(scene).getPropertyValue('--lever-pull')), width: scene.querySelector('.lever-grip').getBoundingClientRect().width })
+            if (now - start < 350) requestAnimationFrame(frame); else resolve()
+          }
+          requestAnimationFrame(frame)
+        })
+      }, { capture: true, once: true })
+    })
+    if (input === 'click') await lever.click()
+    else if (input === 'tap') await lever.tap()
+    else await page.keyboard.press(input)
+    assert.ok(await page.locator('#draw-reveal').isVisible())
+    assert.ok(await page.locator('#skip-draw').isVisible())
+    const frames = await page.evaluate(async () => { await window.feedbackDone; return window.feedbackFrames })
+    const peak = frames.reduce((a, b) => a.q > b.q ? a : b)
+    assert.ok(peak.q > .9 && frames.some((frame) => frame.t > peak.t && frame.q > .05 && frame.q < .9), `${input} stroke and return`)
+    assert.ok(frames.at(-1).q < .01 && peak.width / frames.at(-1).width >= 1.2, `${input} settled`)
+    await page.locator('#skip-draw').click()
+    const redraw = page.locator('#redraw')
+    await redraw.scrollIntoViewIfNeeded()
+    if (input === 'Enter' || input === 'Space') await redraw.focus()
+    await page.evaluate(() => {
+      window.redrawFrames = []
+      document.querySelector('#redraw').addEventListener('click', () => {
+        const scene = document.querySelector('#redraw .lever-scene'), start = performance.now()
+        window.redrawDone = new Promise((resolve) => {
+          function frame(now) {
+            window.redrawFrames.push({ t: now - start, q: Number(getComputedStyle(scene).getPropertyValue('--lever-pull')) })
+            if (now - start < 350) requestAnimationFrame(frame); else resolve()
+          }
+          requestAnimationFrame(frame)
+        })
+      }, { capture: true, once: true })
+    })
+    if (input === 'click') await redraw.click()
+    else if (input === 'tap') await redraw.tap()
+    else await page.keyboard.press(input)
+    const redrawFrames = await page.evaluate(async () => { await window.redrawDone; return window.redrawFrames })
+    const redrawPeak = redrawFrames.reduce((a, b) => a.q > b.q ? a : b)
+    assert.ok(redrawPeak.q > .9 && redrawFrames.some((frame) => frame.t > redrawPeak.t && frame.q > .05 && frame.q < .9), `${input} redraw stroke and return`)
+    assert.ok(redrawFrames.at(-1).q < .01)
+    fs.writeFileSync(`/tmp/subway-lever-motion-390x844/${input}-feedback.json`, JSON.stringify({ home: frames, redraw: redrawFrames }, null, 2))
+    await page.keyboard.press('Escape')
+    await page.waitForFunction(() => !document.querySelector('#draw').disabled)
+  }
+  const lever = page.locator('#draw')
+  const box = await lever.boundingBox(), x = box.x + box.width / 2, y = box.y + 24
+  await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x, y + 20)
+  await page.evaluate(() => {
+    window.handoff = new Promise((resolve) => {
+      document.querySelector('#draw').addEventListener('pointerup', () => {
+        requestAnimationFrame(() => resolve(Number(getComputedStyle(document.querySelector('#redraw .lever-scene')).getPropertyValue('--lever-pull'))))
+      }, { once: true })
+    })
+  })
+  await page.mouse.up()
+  assert.ok(await page.evaluate(() => window.handoff) > .5, 'home pull continues in the visible dialog')
+  assert.ok(await page.locator('#draw-reveal').isVisible())
+  await page.keyboard.press('Escape')
+  await page.waitForFunction(() => !document.querySelector('#draw').disabled)
+  await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x, y + 20)
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  assert.equal(await lever.locator('.lever-scene').evaluate((node) => Number(getComputedStyle(node).getPropertyValue('--lever-pull'))), 0)
+  await page.mouse.up()
+  assert.ok(await page.locator('#draw-reveal').isVisible())
+  assert.ok(await page.locator('#open-draw-result').isEnabled())
+  assert.equal(await page.locator('#redraw .lever-scene').evaluate((node) => node.getAnimations().length), 0)
+  await page.keyboard.press('Escape')
+  await page.waitForFunction(() => !document.querySelector('#draw').disabled)
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await lever.click()
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.waitForFunction(() => document.querySelector('#draw-reveal').classList.contains('landed'))
+  assert.equal(await page.locator('#redraw .lever-scene').evaluate((node) => node.getAnimations().length), 0)
+  await page.keyboard.press('Escape')
+  await page.waitForFunction(() => !document.querySelector('#draw').disabled)
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await lever.click()
+  await page.keyboard.press('Escape')
+  await page.waitForFunction(() => !document.querySelector('#draw').disabled)
+  await lever.click()
+  assert.ok(await page.locator('#draw-reveal').isVisible())
+  await page.close()
+
+  const unsupported = await browser.newPage({ reducedMotion: 'no-preference' })
+  await unsupported.addInitScript(() => { CSS.registerProperty = undefined })
+  await unsupported.goto(home)
+  await unsupported.waitForFunction(() => document.querySelector('#draw-pool').textContent)
+  await unsupported.locator('#draw').click()
+  assert.ok(await unsupported.locator('#draw-reveal').isVisible())
+  assert.equal(await unsupported.locator('#redraw .lever-scene').evaluate((node) => node.getAnimations().length), 0)
+  await unsupported.close()
+  const noWaapi = await browser.newPage({ reducedMotion: 'no-preference' })
+  await noWaapi.addInitScript(() => { Element.prototype.animate = undefined })
+  await noWaapi.goto(home)
+  await noWaapi.waitForFunction(() => document.querySelector('#draw-pool').textContent)
+  await noWaapi.locator('#draw').click()
+  assert.ok(await noWaapi.locator('#open-draw-result').isEnabled())
+  assert.equal(await noWaapi.locator('#redraw .lever-scene').evaluate((node) => node.getAnimations().length), 0)
+  await noWaapi.close()
+}
+
 async function main() {
   const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_USE_BUNDLED_CHROMIUM === '1' ? undefined : 'chrome', args: ['--host-resolver-rules=MAP tile.openstreetmap.org ~NOTFOUND'] })
   try {
     for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }, { width: 280, height: 240 }]) await recordMotion(browser, viewport)
+    for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }, { width: 280, height: 240 }]) await checkLeverGeometry(browser, viewport)
+    await checkLeverFeedback(browser)
     await checkLever(browser)
     await checkOutsideTouchScroll(browser)
     await checkTwoCandidateMotion(browser)
@@ -386,6 +631,7 @@ async function main() {
     page.on('pageerror', (error) => errors.push(error.message))
     await page.addInitScript(() => { Math.random = () => 0 })
     await page.goto(home)
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent)
 
     const mobileCopy = await page.locator('main > .slot-screen .slot-copy').boundingBox()
     const mobileMachine = await page.locator('main > .slot-screen .slot-machine').boundingBox()
@@ -1796,6 +2042,9 @@ async function main() {
     await singleSearch.fill('')
     await singleDraw.locator('#draw').click()
     assert.match(await singleDraw.locator('#draw-remaining').innerText(), /뽑을 수 있는 역이 한 곳/)
+    assert.equal(await singleDraw.locator('#redraw .lever-scene').evaluate((node) => node.getAnimations().length), 0)
+    await singleDraw.waitForTimeout(350)
+    assert.equal(await singleDraw.locator('#redraw .lever-scene').evaluate((node) => node.getAnimations().length), 0)
     assert.ok(await singleDraw.locator('#redraw').isDisabled())
     await singleDraw.locator('#open-draw-result').click()
     await singleDraw.getByRole('heading', { name: '안국역', exact: true }).waitFor()
