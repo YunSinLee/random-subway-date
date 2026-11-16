@@ -39,20 +39,21 @@
         <p class="stage-label slot-pixel" lang="en" aria-hidden="true"><span>PICK YOUR NEXT STOP</span><span>SEOUL METRO</span></p>
         <div class="slot-machine">
           <p class="slot-board slot-pixel" lang="en" aria-hidden="true"><i></i>NEXT STOP<i></i></p>
-          <div class="slot-reels" aria-hidden="true">
-            <div class="slot-side"><img src="./assets/pixel-train.svg" alt="" width="35" height="35"></div>
-            <div class="ticket-display">
+          <div class="slot-reels">
+            <div class="slot-side" aria-hidden="true"><img src="./assets/pixel-train.svg" alt="" width="35" height="35"></div>
+            <div class="ticket-display" aria-hidden="true">
               <p class="slot-unknown slot-pixel">? ? ?</p>
               <p class="slot-unknown-label">오늘의 역</p>
             </div>
-            <div class="slot-side"><img class="slot-heart" src="./assets/pixel-heart.svg" alt="" width="35" height="31"></div>
+            <div class="slot-side" aria-hidden="true"><img class="slot-heart" src="./assets/pixel-heart.svg" alt="" width="35" height="31"></div>
+            <button type="button" id="draw" class="slot-lever" aria-label="손잡이 당겨 역 뽑기" aria-describedby="draw-pool draw-hint"><img src="./assets/pixel-lever.svg" alt="" draggable="false" width="25" height="115"></button>
           </div>
           <p id="machine-count" class="slot-status slot-pixel" lang="en" aria-hidden="true"></p>
           <div class="ticket-track" aria-hidden="true">
             <i></i><i></i><i></i><i></i><i></i><i></i><span class="ticket-stop"></span>
           </div>
-          <button type="button" id="draw" class="primary" aria-describedby="draw-pool">오늘의 역 뽑기 <span aria-hidden="true">↗</span></button>
-          <img class="slot-lever" src="./assets/pixel-lever.svg" alt="" width="25" height="115">
+          <button type="button" class="primary" disabled>확인하기 <span aria-hidden="true">↗</span></button>
+          <p id="draw-hint" class="draw-remaining">손잡이를 아래로 당기거나 눌러 뽑으세요.</p>
         </div>
         <p class="stage-caption">우리의 다음 데이트, 운에 맡겨볼까요?</p>
       </div>
@@ -264,6 +265,7 @@
                 </div>
               </div>
               <div class="slot-side" aria-hidden="true"><img class="slot-heart" src="./assets/pixel-heart.svg" alt="" width="35" height="31"></div>
+              <button type="button" id="redraw" class="slot-lever" aria-label="손잡이 당겨 다시 뽑기" aria-describedby="draw-remaining redraw-hint" disabled><img src="./assets/pixel-lever.svg" alt="" draggable="false" width="25" height="115"></button>
             </div>
             <p id="draw-line" class="slot-status" aria-hidden="true"></p>
             <div class="ticket-track" aria-hidden="true">
@@ -273,14 +275,14 @@
             </div>
             <div id="draw-map-search" hidden></div>
             <div class="ticket-actions">
-              <button type="button" id="skip-draw" class="primary" hidden>결과 바로 보기</button>
-              <button type="button" id="open-draw-result" class="primary" aria-describedby="draw-station draw-line draw-coverage"><span id="open-draw-result-station" class="cta-prefix" aria-hidden="true"></span><span id="open-draw-result-label">코스 보기</span> <span aria-hidden="true">↗</span></button>
+              <div class="ticket-secondary"><button type="button" id="skip-draw" hidden>결과 바로 보기</button></div>
+              <button type="button" id="open-draw-result" class="primary" aria-describedby="draw-station draw-line draw-coverage draw-confirm-hint" disabled>확인하기 <span aria-hidden="true">↗</span></button>
             </div>
-            <img class="slot-lever" src="./assets/pixel-lever.svg" alt="" width="25" height="115">
           </div>
           <p id="draw-caption" class="stage-caption" aria-hidden="true"></p>
         </div>
         <div class="slot-more">
+          <p id="draw-confirm-hint" class="draw-remaining">확인하면 뽑힌 역의 코스를 열어요.</p>
           <div class="slot-preview">
             <div class="preview-header">
               <h3>여기서 이런 데이트 어때요?</h3>
@@ -290,7 +292,7 @@
             <p id="draw-coverage" hidden></p>
             <p id="draw-saved-course" class="draw-remaining" hidden></p>
           </div>
-          <button type="button" id="redraw" aria-describedby="draw-remaining" hidden>다른 역도 만나볼래요</button>
+          <p id="redraw-hint" class="draw-remaining">손잡이를 아래로 당기거나 눌러 뽑으세요.</p>
           <div id="recent-draws" class="recent-draws" hidden aria-label="이번에 뽑은 다른 역"></div>
           <p id="draw-remaining" class="draw-remaining" hidden></p>
           <p id="draw-origin" class="draw-remaining" hidden></p>

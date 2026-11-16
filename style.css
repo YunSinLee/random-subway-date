@@ -422,15 +422,16 @@ footer { padding: 15px 0 23px; }
   background: #f8eac2; opacity: .35;
 }
 .slot-names {
-  position: relative; display: grid; grid-template-columns: minmax(0, 1fr); gap: calc(8px * var(--s));
-  padding-inline: calc(4px * var(--s));
+  position: absolute; top: 50%; inset-inline: 0; transform: translateY(-50%);
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; padding-inline: calc(4px * var(--s));
 }
+.slot-names p { block-size: calc(54px * var(--s)); min-block-size: calc(54px * var(--s)); max-block-size: calc(54px * var(--s)); margin: 0; }
 #draw-prev, #draw-next {
-  height: calc(24px * var(--s)); font-size: calc(17px * var(--s)); line-height: calc(24px * var(--s));
+  display: grid; place-items: center; font-size: calc(17px * var(--s)); line-height: calc(24px * var(--s));
   opacity: .25; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
 }
-#draw-station {
-  display: grid; place-items: center; min-height: calc(54px * var(--s));
+#draw-station, .draw-preview-row {
+  display: grid; place-items: center;
   /* --chars is the name length, so long station names shrink to the reel width before they wrap. */
   font-weight: 700; font-size: clamp(14px, calc(96cqw / var(--chars, 3)), calc(38px * var(--s)));
   line-height: 1.15; overflow-wrap: anywhere;
@@ -466,6 +467,8 @@ footer { padding: 15px 0 23px; }
 .landed .ticket-stop { background: var(--accent); }
 .ticket-arrival { right: 0; border: 1px solid var(--accent); opacity: 0; }
 .ticket-actions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.ticket-secondary { min-height: 44px; display: grid; place-items: center; }
+#skip-draw { min-height: 44px; padding: 6px 12px; border: 1px solid var(--border); background: var(--card); font-weight: 700; }
 .primary {
   display: block; width: 100%; min-height: calc(56px * var(--s, 1)); padding: calc(14px * var(--s, 1)) 12px;
   border: calc(2px * var(--s, 1)) solid var(--ink); background: var(--accent); color: var(--ink);
@@ -479,9 +482,13 @@ footer { padding: 15px 0 23px; }
   filter: drop-shadow(calc(2px * var(--s, 1)) calc(2px * var(--s, 1)) 0 var(--ink));
 }
 .slot-lever {
-  position: absolute; top: calc(103px * var(--s)); left: calc(100% - 1px * var(--s));
-  width: calc(20px * var(--s)); height: calc(92px * var(--s)); max-width: none; transform-origin: 50% 100%;
+  position: absolute; z-index: 2; top: calc(23px * var(--s)); left: calc(100% - 8px * var(--s));
+  display: grid; place-items: center; width: 44px; height: max(44px, calc(92px * var(--s)));
+  padding: 0; border: 0; background: transparent; touch-action: none;
 }
+.slot-lever img { width: calc(20px * var(--s)); height: calc(92px * var(--s)); max-width: none; translate: 0 var(--pull, 0px); transition: translate 120ms ease-out; }
+.slot-lever:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.slot-lever:disabled { opacity: .5; }
 .slot-more { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
 .draw-scope { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px 8px; }
 .scope-header { display: contents; }
@@ -548,22 +555,16 @@ footer { padding: 15px 0 23px; }
 #draw-map-search a { font-weight: 700; font-size: 12px; line-height: 17px; }
 .recent-draws { display: flex; flex-wrap: wrap; gap: 6px; }
 .recent-draws button { padding: 6px 9px; border: 1px solid var(--border); background: var(--card); font-size: 12px; }
-.recent-draws button:hover, #redraw:hover, #open-settings:hover, #close-settings:hover, #clear-place-condition:hover { background: #eef0e6; }
-#redraw {
-  width: 100%; min-height: 48px; padding: 6px 12px; border: 2px solid var(--ink); background: var(--card);
-  font-weight: 700; font-size: 15px; line-height: 21px;
-}
-#redraw::after { content: '↻'; content: '↻' / ''; margin-inline-start: .6em; }
+.recent-draws button:hover, #open-settings:hover, #close-settings:hover, #clear-place-condition:hover { background: #eef0e6; }
 
 .draw-reveal[open]:not(.landed) .slot-side img { animation: side-roll .3s linear infinite; }
 .draw-reveal[open]:not(.landed) .slot-side .slot-heart { animation-delay: -.12s; }
 .draw-reveal[open]:not(.landed) .slot-board i { animation: lamp-blink .36s steps(1) infinite; }
 .draw-reveal[open]:not(.landed) .slot-board i:last-child { animation-delay: -.18s; }
-.draw-reveal[open]:not(.landed) .slot-lever { animation: lever-pull .45s steps(4, jump-none); }
 .draw-reveal[open]:not(.landed) .ticket-train {
   animation: train-arrival var(--draw-duration) cubic-bezier(.15, .6, .35, 1) forwards;
 }
-.landed .slot-names { animation: reel-land .36s cubic-bezier(.2, 1.6, .4, 1); }
+.landed .slot-names { animation: reel-land .18s ease-out; }
 .landed #draw-station { animation: station-arrival .3s ease-out; }
 .landed #draw-line { animation: station-arrival .34s ease-out; }
 .landed .ticket-arrival { animation: arrival-ring .6s ease-out; }
@@ -574,22 +575,21 @@ footer { padding: 15px 0 23px; }
   100% { translate: 0 0; }
 }
 @keyframes lamp-blink { 50% { opacity: .25; } }
-@keyframes lever-pull { 40% { scale: 1 .7; } }
-/* One reel step is the distance between two name rows, 39.8% of the list height. */
-@keyframes reel-land { from { transform: translateY(-39.8%); } }
+@keyframes reel-land { from { translate: 0 -3px; } 65% { translate: 0 1px; } to { translate: 0 0; } }
 @keyframes train-arrival { to { left: calc(100% - 10px * var(--s)); } }
 @keyframes arrival-ring {
   from { opacity: .8; scale: 1.2; }
   to { opacity: 0; scale: 2.8; }
 }
 @keyframes station-arrival {
-  from { opacity: .65; translate: 0 5px; }
-  60% { opacity: 1; translate: 0 -1px; }
+  from { opacity: .65; }
+  60% { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
   .draw-reveal[open] :is(.slot-side img, .slot-board i, .slot-lever, .slot-names, .ticket-train, .ticket-arrival, #draw-station, #draw-line) {
     animation: none;
   }
+  .slot-lever img { transition: none; }
 }
 @media (max-width: 359px) {
   main, footer, .draw-reveal .slot-screen { width: calc(100% - 28px); }
@@ -679,22 +679,22 @@ footer { padding: 15px 0 23px; }
 }
 /* Short screens: drop the machine frame and keep both actions pinned to the bottom. */
 @media (max-height: 480px) {
-  .draw-reveal { scroll-padding-bottom: 116px; }
-  .draw-reveal .ticket-header { min-height: 48px; border: 0; }
-  .draw-reveal .slot-screen { display: flex; flex-direction: column; gap: 8px; max-width: none; padding: 0 0 8px; }
+  .draw-reveal { scroll-padding-bottom: 110px; }
+  .draw-reveal .ticket-header { min-height: 44px; border: 0; }
+  .draw-reveal .slot-screen { display: flex; flex-direction: column; gap: 4px; max-width: none; padding: 0 0 8px; }
   .draw-reveal :is(.slot-stage, .slot-machine, .slot-more) { display: contents; }
-  .draw-reveal :is(.slot-eyebrow, .slot-lead, .stage-label, .stage-caption, .slot-board, .slot-lever, #draw-prev, #draw-next, .cta-prefix) {
+  .draw-reveal :is(.slot-eyebrow, .slot-lead, .stage-label, .stage-caption, .slot-board) {
     display: none;
   }
+  .draw-reveal:not(.spinning) :is(#draw-prev, #draw-next) { display: none; }
   .draw-reveal .slot-machine { --s: 1; }
   .draw-reveal .slot-title { font-size: 20px; line-height: 1.3; letter-spacing: 0; }
-  .draw-reveal .slot-reels { flex: none; height: 82px; }
+  .draw-reveal .slot-title span { display: inline; }
+  .draw-reveal .slot-reels { flex: none; height: 82px; grid-template-columns: 44px minmax(0, 1fr) 44px; }
+  .draw-reveal .slot-lever { left: auto; right: 5px; top: 0; height: 72px; }
+  .draw-reveal .slot-lever img { height: 68px; width: auto; }
   .draw-reveal .primary { min-height: 44px; padding-block: 8px; filter: none; }
-  .ticket-actions { order: 1; position: sticky; bottom: 60px; z-index: 1; padding-top: 8px; background: var(--paper); }
-  .draw-reveal:has(#redraw[hidden]) .ticket-actions { bottom: 0; padding-bottom: 8px; }
-  #redraw {
-    order: 2; flex: none; position: sticky; bottom: 8px; z-index: 1; min-height: 44px;
-    box-shadow: 0 0 0 8px var(--paper);
-  }
+  .ticket-actions { order: 1; position: sticky; bottom: 0; z-index: 1; padding: 8px 0; gap: 2px; background: var(--paper); }
+  .draw-reveal.landed .ticket-secondary { display: none; }
   #draw-map-search a, .recent-draws button { scroll-margin-block-start: 8px; }
 }

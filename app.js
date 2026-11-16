@@ -39,7 +39,7 @@ let moved = false
 const mapTouches = new Map()
 let pinch = null
 let drawing = false
-let drawTimer = null
+let drawAnimation = null
 let drawResult = null
 let drawTrigger = null
 let drawOrigin = null
@@ -413,6 +413,7 @@ function refreshDrawPool() {
     : count ? '' : message
   byId('clear-place-condition').hidden = Boolean(count) || !enabled.size || !hasPlaceCondition
   byId('draw').disabled = drawing || !count
+  if (byId('draw').disabled) cancelLevers()
   byId('draw-from-course').disabled = drawing || !count || onlyCurrent
   byId('open-draw-filters').dataset.target = enabled.size && (!count || (onlyCurrent && canRelaxPlaceCondition))
     ? placeConditionId
@@ -1785,6 +1786,58 @@ stationSearch.addEventListener('submit', (event) => {
 
 const reveal = byId('draw-reveal')
 const motionPreference = matchMedia('(prefers-reduced-motion: reduce)')
+const leverCancels = []
+for (const lever of [byId('draw'), byId('redraw')]) {
+  let pointer = null
+  let allowClick = true
+  function cancel() {
+    if (pointer) {
+      const id = pointer.id
+      pointer = null
+      allowClick = false
+      if (lever.hasPointerCapture(id)) lever.releasePointerCapture(id)
+    }
+    lever.style.removeProperty('--pull')
+  }
+  leverCancels.push(cancel)
+  lever.addEventListener('pointerdown', (event) => {
+    if (lever.disabled || !event.isPrimary || event.button !== 0) return
+    pointer = { id: event.pointerId, x: event.clientX, y: event.clientY }
+    allowClick = true
+    lever.setPointerCapture(event.pointerId)
+  })
+  lever.addEventListener('pointermove', (event) => {
+    if (!pointer || pointer.id !== event.pointerId) return
+    lever.style.setProperty('--pull', `${Math.max(0, Math.min(20, event.clientY - pointer.y))}px`)
+  })
+  lever.addEventListener('pointerup', (event) => {
+    if (!pointer || pointer.id !== event.pointerId) return
+    const x = event.clientX - pointer.x
+    const y = event.clientY - pointer.y
+    const tap = Math.hypot(x, y) <= 6
+    const pull = y >= 12 && y > Math.abs(x)
+    allowClick = tap || pull
+    pointer = null
+    lever.style.removeProperty('--pull')
+    if (lever.disabled) allowClick = false
+    else if (event.pointerType === 'touch' && pull && !tap) {
+      allowClick = false
+      lever.click()
+    }
+  })
+  for (const type of ['pointercancel', 'lostpointercapture']) {
+    lever.addEventListener(type, (event) => {
+      if (pointer && pointer.id === event.pointerId) cancel()
+    })
+  }
+  lever.addEventListener('click', (event) => {
+    if (event.detail && !allowClick) event.stopImmediatePropagation()
+  }, true)
+}
+function cancelLevers() { leverCancels.forEach((cancel) => cancel()) }
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') cancelLevers()
+})
 motionPreference.addEventListener('change', (event) => {
   if (event.matches) revealResult()
 })
@@ -1793,9 +1846,8 @@ function drawLine(station) {
   return lines.get(station.lines.find((id) => enabled.has(id)))
 }
 
-function showTicket(station, preview = false) {
+function showTicket(station) {
   const line = drawLine(station)
-  if (!preview) reveal.style.setProperty('--draw-color', line.color)
   const name = stationDisplayName(station)
   byId('draw-station').textContent = name
   byId('draw-station').style.setProperty('--chars', [...name].length)
@@ -1836,9 +1888,9 @@ function refreshDrawCourseNotice(counts = courseCategories.map(([key, label]) =>
   const savedCourseNotice = byId('draw-saved-course')
   const draft = editedCourseIds().includes(drawResult.id) ? readDraft(drawResult.id) : null
   savedCourseNotice.hidden = !draft
-  byId('open-draw-result-label').textContent = savedCourseNotice.hidden ? '코스 보기' : '저장한 코스 보기'
   const resultDescription = ['draw-station', 'draw-line', 'draw-coverage']
   if (!savedCourseNotice.hidden) resultDescription.push(savedCourseNotice.id)
+  resultDescription.push('draw-confirm-hint')
   byId('open-draw-result').setAttribute('aria-describedby', resultDescription.join(' '))
   if (draft) {
     const params = new URLSearchParams(draft.course)
@@ -1892,6 +1944,7 @@ function refreshDrawCourseNotice(counts = courseCategories.map(([key, label]) =>
 
 function showWinner(fromHistory = false) {
   showTicket(drawResult)
+  reveal.style.setProperty('--draw-color', drawLine(drawResult).color)
   byId('draw-station').removeAttribute('aria-hidden')
   byId('draw-line').removeAttribute('aria-hidden')
   if (drawResult.lines.length > 1) {
@@ -1925,16 +1978,16 @@ function showWinner(fromHistory = false) {
   title[1].textContent = `${stationDisplayName(drawResult)}!`
   byId('draw-lead').textContent = '이 역에서 둘만의 데이트를 시작해 보세요.'
   byId('draw-caption').textContent = '우리의 다음 데이트가 기다리고 있어요.'
-  byId('open-draw-result-station').textContent = `${stationDisplayName(drawResult)} `
   reveal.classList.add('landed')
   byId('open-draw-result').disabled = false
   const eligible = eligibleStations().filter((station) => station !== drawOrigin)
   const redraw = byId('redraw')
-  redraw.hidden = eligible.length < 2
+  redraw.disabled = eligible.length < 2
   const remaining = eligible.filter((station) => !drawnStations.has(station)).length
-  redraw.textContent = '다시 뽑기'
-  if (remaining === 1) redraw.textContent = '남은 역 뽑기'
-  if (!remaining) redraw.textContent = '새로 한 바퀴 뽑기'
+  let redrawLabel = '다시 뽑기'
+  if (remaining === 1) redrawLabel = '남은 역 뽑기'
+  if (!remaining) redrawLabel = '새로 한 바퀴 뽑기'
+  redraw.setAttribute('aria-label', `손잡이 당겨 ${redrawLabel}`)
   const drawRemaining = byId('draw-remaining')
   const nextRoundCount = eligible.length - 1
   const previousStation = recentDraws[0]
@@ -1984,15 +2037,23 @@ function showWinner(fromHistory = false) {
   history.hidden = !history.childElementCount
 }
 
+function clearDrawMotion() {
+  if (drawAnimation) {
+    drawAnimation.onfinish = null
+    drawAnimation.cancel()
+    drawAnimation = null
+  }
+  byId('draw-reel').querySelectorAll('.draw-preview-row').forEach((row) => row.remove())
+  reveal.classList.remove('spinning')
+  cancelLevers()
+}
+
 function revealResult() {
   if (!reveal.open || !drawResult || reveal.classList.contains('landed')) return
-  clearTimeout(drawTimer)
-  drawTimer = null
-  for (const animation of byId('draw-reel').getAnimations?.() ?? []) animation.cancel()
+  clearDrawMotion()
   const skip = byId('skip-draw')
   const moveFocus = document.activeElement === skip
   skip.hidden = true
-  byId('open-draw-result').hidden = false
   drawnStations.add(drawResult)
   const previous = recentDraws.indexOf(drawResult)
   if (previous !== -1) recentDraws.splice(previous, 1)
@@ -2004,6 +2065,8 @@ function revealResult() {
 
 function drawStation(previousWinner = null, trigger = null) {
   if (drawing) return
+  clearDrawMotion()
+  for (const animation of byId('draw-reel').getAnimations?.() ?? []) animation.cancel()
   const candidates = eligibleStations()
   if (!reveal.open) drawOrigin = candidates.includes(previousWinner) ? previousWinner : null
   const eligible = candidates.filter((station) => station !== drawOrigin)
@@ -2020,7 +2083,6 @@ function drawStation(previousWinner = null, trigger = null) {
   if (trigger) drawTrigger = trigger
   refreshDrawPool()
   byId('open-draw-result').disabled = true
-  byId('open-draw-result').hidden = true
   byId('draw-announcement').textContent = ''
   byId('draw-station').setAttribute('aria-hidden', 'true')
   byId('draw-line').setAttribute('aria-hidden', 'true')
@@ -2038,49 +2100,52 @@ function drawStation(previousWinner = null, trigger = null) {
   byId('draw-status').children[1].textContent = '어디일까?'
   byId('draw-lead').textContent = '둘만의 목적지를 찾고 있어요.'
   byId('draw-caption').textContent = '두근두근, 잠시만 기다려 주세요.'
-  byId('open-draw-result-station').textContent = ''
   if (!reveal.open) {
     recentDraws.length = 0
     reveal.returnValue = ''
     reveal.showModal()
   }
   byId('recent-draws').hidden = true
-  byId('redraw').hidden = true
+  byId('redraw').disabled = true
   reveal.scrollTop = 0
+  showTicket(drawResult)
+  byId('draw-line').textContent = '목적지를 찾는 중'
 
-  if (motionPreference.matches || pool.length === 1) {
+  const reel = byId('draw-reel')
+  if (motionPreference.matches || pool.length === 1 || typeof reel.animate !== 'function') {
     revealResult()
     return
   }
 
   byId('skip-draw').hidden = false
   byId('draw-announcement').textContent = '역을 뽑는 중이에요.'
-  const delays = [95, 100, 110, 130, 155, 190, 250, 325, 420]
-  reveal.style.setProperty('--draw-duration', delays.reduce((total, delay) => total + delay, 0) + 'ms')
-  let frame = 0
+  reveal.style.setProperty('--draw-duration', '2000ms')
   const previews = pool.length === 2 ? pool : pool.filter((station) => station !== drawResult)
   let lastPreview = null
   let unseenPreviews = [...previews]
-  const stationLabel = byId('draw-reel')
-  function spin() {
-    if (!reveal.open) return
-    if (frame === delays.length) {
-      revealResult()
-      return
-    }
+  const rows = []
+  for (let frame = 0; frame < 18; frame += 1) {
     if (!unseenPreviews.length) unseenPreviews = [...previews]
-    let index = Math.floor(Math.random() * unseenPreviews.length)
-    if (unseenPreviews[index] === lastPreview) index = (index + 1) % unseenPreviews.length
+    const options = unseenPreviews.filter((station) => station !== lastPreview)
+    if (!options.length) unseenPreviews = previews.filter((station) => station !== lastPreview)
+    const choices = unseenPreviews.filter((station) => station !== lastPreview)
+    const choice = choices[Math.floor(Math.random() * choices.length)]
+    const index = unseenPreviews.indexOf(choice)
     lastPreview = unseenPreviews.splice(index, 1)[0]
-    showTicket(lastPreview, true)
-    stationLabel.animate?.([
-      { opacity: .58, transform: 'translateY(32px)' },
-      { opacity: 1, transform: 'translateY(0)' },
-    ], { duration: Math.min(delays[frame], 140), easing: 'ease-out' })
-    drawTimer = setTimeout(spin, delays[frame])
-    frame += 1
+    const row = document.createElement('p')
+    row.className = 'draw-preview-row'
+    row.setAttribute('aria-hidden', 'true')
+    row.textContent = stationDisplayName(lastPreview)
+    row.style.setProperty('--chars', [...row.textContent].length)
+    rows.push(row)
   }
-  spin()
+  reel.prepend(...rows)
+  reveal.classList.add('spinning')
+  drawAnimation = reel.animate([
+    { transform: `translateY(${-100 * 1.5 / 21}%)` },
+    { transform: `translateY(${-100 * 19.5 / 21}%)` },
+  ], { duration: 2000, easing: 'cubic-bezier(.2,.65,.35,1)', fill: 'forwards' })
+  drawAnimation.onfinish = revealResult
 }
 
 function nearbyCourseParams(station) {
@@ -2093,11 +2158,10 @@ function nearbyCourseParams(station) {
 }
 
 function finishDraw() {
+  clearDrawMotion()
   for (const animation of byId('draw-reel').getAnimations?.() ?? []) animation.cancel()
   byId('skip-draw').hidden = true
   const winner = reveal.returnValue === 'course' ? drawResult : null
-  clearTimeout(drawTimer)
-  drawTimer = null
   drawResult = null
   drawing = false
   refreshDrawPool()

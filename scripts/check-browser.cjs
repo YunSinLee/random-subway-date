@@ -2,6 +2,7 @@
 const assert = require('node:assert/strict')
 const { execFileSync } = require('node:child_process')
 const path = require('node:path')
+const fs = require('node:fs')
 const { chromium } = require('playwright')
 
 const home = process.argv[2] ?? 'http://127.0.0.1:18473/'
@@ -34,9 +35,349 @@ async function chooseNextCandidate(page, key, label) {
   await options.nth((selected + 1) % before.length).click()
 }
 
+async function checkReelSeek(page) {
+  const measurements = await page.locator('#draw-reel').evaluate(async (reel) => {
+    const animation = reel.getAnimations()[0]
+    animation.pause()
+    const rows = [...reel.children]
+    const names = rows.map((row) => row.textContent)
+    const samples = []
+    for (const time of [0, 100, 200, 800, 900, 1600, 1700, 1900, 1999]) {
+      animation.currentTime = time
+      await new Promise(requestAnimationFrame)
+      const rects = rows.map((row) => row.getBoundingClientRect())
+      const display = reel.parentElement.getBoundingClientRect()
+      samples.push({ y: rects[0].top, heights: rects.map((r) => r.height), tops: rects.map((r) => r.top), center: (rects[19].top + rects[19].bottom - display.top - display.bottom) / 2 })
+      if (rows.some((row, i) => reel.children[i] !== row || row.textContent !== names[i])) throw Error('reel rows changed')
+    }
+    animation.currentTime = 0
+    animation.play()
+    return { names, samples }
+  })
+  assert.equal(measurements.names.length, 21)
+  assert.ok(new Set(measurements.names.slice(0, 18)).size >= 2)
+  for (const sample of measurements.samples) {
+    const height = sample.heights[0]
+    assert.ok(sample.heights.every((value) => Math.abs(value - height) < 1))
+    assert.ok(sample.tops.slice(1).every((value, i) => Math.abs(value - sample.tops[i] - height) < 1))
+  }
+  const y = measurements.samples.map((sample) => sample.y)
+  assert.ok(y.slice(1).every((value, i) => value < y[i]))
+  assert.ok(y[1] - y[2] > y[3] - y[4] && y[3] - y[4] > y[5] - y[6] && y[5] - y[6] > 0)
+  assert.ok(Math.abs(measurements.samples.at(-1).center) < 1)
+}
+
+async function recordMotion(browser, viewport) {
+  const page = await browser.newPage({ viewport, reducedMotion: 'no-preference' })
+  await page.addInitScript(() => { Math.random = () => 0 })
+  await page.goto(home)
+  await page.evaluate(() => document.fonts.ready)
+  await page.locator('#draw').click()
+  await page.locator('#draw-reveal').waitFor()
+  const dir = `/tmp/subway-slot-motion-${viewport.width}x${viewport.height}`
+  fs.mkdirSync(dir, { recursive: true })
+  await page.evaluate(() => {
+    const reel = document.querySelector('#draw-reel')
+    const display = reel.parentElement
+    const rows = [...reel.children]
+    const names = rows.map((row) => row.textContent)
+    const start = performance.now()
+    window.motionSamples = []
+    window.motionDone = new Promise((resolve) => {
+      function sample(now) {
+        const rect = display.getBoundingClientRect()
+        const visible = rows.filter((row) => row.isConnected).map((row) => ({ name: row.textContent, rect: row.getBoundingClientRect() }))
+        const nearest = visible.reduce((a, b) => Math.abs((b.rect.top + b.rect.bottom) / 2 - (rect.top + rect.bottom) / 2) < Math.abs((a.rect.top + a.rect.bottom) / 2 - (rect.top + rect.bottom) / 2) ? b : a)
+        const winner = document.querySelector('#draw-station').getBoundingClientRect()
+        window.motionSamples.push({ t: now - start, y: visible[0].rect.top, center: nearest.name, winnerOffset: (winner.top + winner.bottom - rect.top - rect.bottom) / 2, stable: rows.every((row, i) => !row.isConnected || (reel.children[i] === row && row.textContent === names[i])), landed: document.querySelector('#draw-reveal').classList.contains('landed') })
+        if (now - start < 2250) requestAnimationFrame(sample)
+        else resolve()
+      }
+      requestAnimationFrame(sample)
+    })
+  })
+  for (const delay of [0, 450, 650, 650]) {
+    if (delay) await page.waitForTimeout(delay)
+    await page.screenshot({ path: `${dir}/frame-${delay}-${Date.now()}.png` })
+  }
+  const samples = await page.evaluate(async () => { await window.motionDone; return window.motionSamples })
+  fs.writeFileSync(`${dir}/samples.json`, JSON.stringify(samples, null, 2))
+  const spinning = samples.filter((sample) => !sample.landed)
+  assert.ok(spinning.length > 20 && spinning.every((sample) => sample.stable))
+  assert.ok(new Set(spinning.map((sample) => sample.center)).size >= 3)
+  assert.ok(spinning.slice(1).every((sample, i) => sample.y <= spinning[i].y + 0.5 && sample.t - spinning[i].t < 200))
+  for (const [start, end] of [[0, 500], [500, 1200], [1200, 1900]]) {
+    const part = spinning.filter((sample) => sample.t >= start && sample.t < end)
+    assert.ok(part.length > 1 && part[0].y - part.at(-1).y > 1)
+  }
+  const landed = samples.filter((sample) => sample.landed)
+  assert.ok(landed.length && landed.every((sample) => Math.abs(sample.winnerOffset) <= 3.1))
+  assert.ok(Math.abs(spinning.at(-1).winnerOffset) < 1)
+  assert.ok(Math.abs(landed.at(-1).winnerOffset) < 1)
+  assert.equal(await page.locator('.draw-preview-row').count(), 0)
+  const longName = await page.evaluate(async () => {
+    const network = (await import('./data/network.js')).default
+    const names = network.stations.map((station) => station.name.endsWith('역') ? station.name : station.name + '역')
+    return names.sort((a, b) => [...b].length - [...a].length)[0]
+  })
+  const nameGeometry = await page.locator('#draw-station').evaluate((node, name) => {
+    node.textContent = name
+    node.style.setProperty('--chars', [...name].length)
+    const range = document.createRange()
+    range.selectNodeContents(node)
+    const row = node.getBoundingClientRect()
+    return { row: { top: row.top, bottom: row.bottom, left: row.left, right: row.right, height: row.height }, lines: [...range.getClientRects()].map((r) => ({ top: r.top, bottom: r.bottom, left: r.left, right: r.right })) }
+  }, longName)
+  assert.ok(nameGeometry.lines.length <= 2 && nameGeometry.lines.length > 0, longName)
+  assert.ok(nameGeometry.lines.every((line) => line.top >= nameGeometry.row.top - 1 && line.bottom <= nameGeometry.row.bottom + 1 && line.left >= nameGeometry.row.left - 1 && line.right <= nameGeometry.row.right + 1), longName)
+  assert.ok(Math.abs(nameGeometry.row.height - (viewport.width >= 900 ? 67.5 : 54)) < 1)
+  await page.screenshot({ path: `${dir}/long-name.png` })
+  await page.close()
+}
+
+async function checkOutsideTouchScroll(browser) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })
+  await page.goto(home)
+  const session = await page.context().newCDPSession(page)
+  await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 15, y: 700 }] })
+  for (const y of [620, 540, 460, 380, 300]) {
+    await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 15, y }] })
+    await page.waitForTimeout(30)
+  }
+  await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+  await page.waitForTimeout(100)
+  assert.ok(await page.evaluate(() => scrollY > 0))
+  assert.ok(await page.locator('#draw-reveal').isHidden())
+  await page.close()
+}
+
+async function checkTwoCandidateMotion(browser) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' })
+  await page.addInitScript(() => { Math.random = () => 0 })
+  await page.goto(home)
+  await openDrawSettings(page)
+  await page.locator('#hide-all').click()
+  await page.getByRole('checkbox', { name: 'GTX-A', exact: true }).check()
+  await closeDrawSettings(page)
+  const count = Number((await page.locator('#draw-pool').innerText()).match(/^\d+/)[0])
+  await page.locator('#draw').click()
+  for (let i = 1; i < count - 2; i += 1) await page.locator('#redraw').click()
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.locator('#redraw').click()
+  const seen = await page.locator('#draw-reel').evaluate(async (reel) => {
+    const rows = [...reel.querySelectorAll('.draw-preview-row')]
+    const names = [...new Set(rows.map((row) => row.textContent))]
+    const seen = new Set()
+    await new Promise((resolve) => {
+      function sample() {
+        const display = reel.parentElement.getBoundingClientRect()
+        const center = (display.top + display.bottom) / 2
+        for (const row of rows) {
+          const r = row.getBoundingClientRect()
+          if (row.isConnected && r.top <= center && r.bottom >= center) seen.add(row.textContent)
+        }
+        if (reel.querySelector('.draw-preview-row')) requestAnimationFrame(sample)
+        else resolve()
+      }
+      requestAnimationFrame(sample)
+    })
+    return { names, seen: [...seen] }
+  })
+  assert.equal(seen.names.length, 2)
+  assert.deepEqual(new Set(seen.seen), new Set(seen.names))
+  await page.close()
+}
+
+async function checkMultiTouchLevers(browser) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, reducedMotion: 'reduce' })
+  await page.addInitScript(() => { window.randomCalls = 0; Math.random = () => { window.randomCalls += 1; return 0 } })
+  await page.goto(home)
+  await page.evaluate(() => document.fonts.ready)
+  const touch = await page.context().newCDPSession(page)
+  for (const id of ['draw', 'redraw']) {
+    const lever = page.locator('#' + id)
+    await lever.evaluate((node) => node.addEventListener('pointerdown', (event) => {
+      if (!event.isPrimary) window.secondaryPointerId = event.pointerId
+    }))
+    const rect = await lever.boundingBox()
+    const x = rect.x + rect.width / 2
+    const y = rect.y + 25
+    const before = await page.evaluate(() => window.randomCalls)
+    const previous = id === 'redraw' ? await page.locator('#draw-station').textContent() : null
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ id: 1, x, y }] })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ id: 1, x, y }, { id: 2, x: x + 5, y: y + 5 }] })
+    const secondaryId = await page.evaluate(() => window.secondaryPointerId)
+    assert.ok(secondaryId)
+    await lever.dispatchEvent('pointercancel', { pointerId: secondaryId, pointerType: 'touch', isPrimary: false })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ id: 1, x, y: y + 10 }, { id: 2, x: x + 5, y: y + 5 }] })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [{ id: 2, x: x + 5, y: y + 5 }] })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ id: 1, x, y: y + 20 }] })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    assert.ok(await page.locator('#draw-reveal').isVisible())
+    assert.equal(await page.evaluate(() => window.randomCalls), before + 1)
+    if (previous) assert.notEqual(await page.locator('#draw-station').textContent(), previous)
+  }
+  await page.close()
+}
+
+async function checkLongWinnerShort(browser) {
+  const page = await browser.newPage({ viewport: { width: 280, height: 240 }, reducedMotion: 'no-preference' })
+  await page.goto(home)
+  await page.evaluate(() => document.fonts.ready)
+  await page.evaluate(async () => {
+    const stations = (await import('./data/network.js')).default.stations
+    const index = stations.findIndex((station) => station.name === '동대문역사문화공원')
+    if (index < 0) throw Error('long winner fixture missing')
+    Math.random = () => (index + .25) / stations.length
+  })
+  await page.locator('#draw').click()
+  await page.waitForFunction(() => document.querySelector('#draw-reveal').classList.contains('landed'))
+  await page.waitForTimeout(250)
+  await page.locator('#draw-reveal').evaluate((dialog) => { dialog.scrollTop = 0 })
+  assert.equal(await page.locator('#draw-station').textContent(), '동대문역사문화공원역')
+  assert.match(await page.locator('#draw-status').textContent(), /동대문역사문화공원역/)
+  const visible = await page.locator('#draw-station').evaluate((node) => {
+    const range = document.createRange()
+    range.selectNodeContents(node)
+    const lines = [...range.getClientRects()]
+    return lines.length > 0 && lines.every((rect) => {
+      if (rect.top < 0 || rect.bottom > innerHeight || rect.left < 0 || rect.right > innerWidth) return false
+      return [0.1, 0.5, 0.9].every((x) => [0.2, 0.5, 0.8].every((y) =>
+        document.elementFromPoint(rect.left + rect.width * x, rect.top + rect.height * y)?.closest('#draw-station') === node))
+    })
+  })
+  await page.screenshot({ path: '/tmp/continuous-slot-long-winner-fixed.png' })
+  assert.ok(visible, 'actual winner text must remain visible above sticky actions')
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 280)
+  for (const id of ['redraw', 'open-draw-result']) {
+    const rect = await page.locator('#' + id).boundingBox()
+    assert.ok(rect.width >= 44 && rect.height >= 44)
+    assert.ok(await page.locator('#' + id).evaluate((node) => {
+      const rect = node.getBoundingClientRect()
+      return document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)?.closest('button') === node
+    }))
+  }
+  await page.locator('#dismiss-draw').focus()
+  await page.keyboard.press('Tab')
+  assert.equal(await page.locator(':focus').getAttribute('id'), 'redraw')
+  await page.keyboard.press('Tab')
+  assert.ok(await page.locator('#draw-map-search a').first().evaluate((link) => {
+    const bounds = link.getBoundingClientRect()
+    return link === document.activeElement && bounds.bottom <= document.querySelector('.ticket-actions').getBoundingClientRect().top
+  }))
+  assert.ok(await page.locator('#draw-reveal').evaluate((dialog) => dialog.scrollTop > 0))
+  await page.locator('#open-draw-result').focus()
+  assert.equal(await page.locator(':focus').getAttribute('id'), 'open-draw-result')
+  await page.close()
+}
+
+async function checkLever(browser) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, reducedMotion: 'reduce' })
+  await page.addInitScript(() => { window.randomCalls = 0; Math.random = () => { window.randomCalls += 1; return 0 } })
+  await page.goto(home)
+  const lever = page.locator('#draw')
+  const dialog = page.locator('#draw-reveal')
+  const count = () => page.evaluate(() => window.randomCalls)
+  const complete = async (action) => {
+    const before = await count()
+    await action()
+    assert.ok(await dialog.isVisible())
+    assert.equal(await count(), before + 1)
+    assert.ok(await page.locator('#open-draw-result').isEnabled())
+    await page.locator('#dismiss-draw').click()
+    await page.waitForFunction(() => !document.querySelector('#draw').disabled)
+  }
+  await complete(() => lever.click())
+  await complete(async () => { await lever.focus(); await page.keyboard.press('Enter') })
+  await complete(async () => { await lever.focus(); await page.keyboard.press('Space') })
+  await complete(() => lever.tap())
+  const bounds = await lever.boundingBox()
+  const x = bounds.x + bounds.width / 2
+  const y = bounds.y + bounds.height / 2
+  await complete(async () => {
+    await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x, y + 20)
+    assert.ok(await dialog.isHidden())
+    await page.mouse.up()
+  })
+  const touch = await page.context().newCDPSession(page)
+  await complete(async () => {
+    const box = await lever.boundingBox()
+    const tx = box.x + box.width / 2
+    const ty = box.y + box.height / 2
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: tx, y: ty }] })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: tx, y: ty + 20 }] })
+    assert.ok(await dialog.isHidden())
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+  })
+  const afterTouch = await count()
+  await lever.dispatchEvent('click', { detail: 1 })
+  assert.ok(await dialog.isHidden())
+  assert.equal(await count(), afterTouch)
+  await complete(async () => { await lever.focus(); await page.keyboard.press('Enter') })
+  await complete(async () => { await lever.focus(); await page.keyboard.press('Space') })
+  await complete(() => lever.tap())
+  for (const gesture of ['short', 'horizontal', 'cancel', 'escape', 'disabled']) {
+    const before = await count()
+    const box = await lever.boundingBox()
+    const tx = box.x + box.width / 2
+    const ty = box.y + box.height / 2
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: tx, y: ty }] })
+    const dx = gesture === 'horizontal' ? 25 : 0
+    const dy = gesture === 'short' ? 8 : gesture === 'horizontal' ? 15 : 20
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: tx + dx, y: ty + dy }] })
+    if (gesture === 'escape') await page.keyboard.press('Escape')
+    if (gesture === 'disabled') await lever.evaluate((node) => { node.disabled = true })
+    await touch.send('Input.dispatchTouchEvent', { type: gesture === 'cancel' ? 'touchCancel' : 'touchEnd', touchPoints: [] })
+    if (gesture === 'disabled') await lever.evaluate((node) => { node.disabled = false })
+    await lever.dispatchEvent('click', { detail: 1 })
+    assert.ok(await dialog.isHidden(), `touch ${gesture}`)
+    assert.equal(await count(), before, `touch ${gesture}`)
+  }
+  await complete(() => lever.tap())
+  for (const gesture of ['short', 'horizontal', 'cancel', 'escape', 'lost', 'disabled']) {
+    const before = await count()
+    await page.mouse.move(x, y); await page.mouse.down()
+    if (gesture === 'short') await page.mouse.move(x, y + 8)
+    if (gesture === 'horizontal') await page.mouse.move(x + 25, y + 15)
+    if (gesture === 'cancel') await lever.dispatchEvent('pointercancel', { pointerId: 1, isPrimary: true })
+    if (gesture === 'escape') await page.keyboard.press('Escape')
+    if (gesture === 'lost') { await page.mouse.move(x, y + 2); await lever.evaluate((node) => node.releasePointerCapture(1)); await page.mouse.move(x, y + 3) }
+    if (gesture === 'disabled') await lever.evaluate((node) => { node.disabled = true })
+    await page.mouse.up()
+    if (gesture === 'disabled') await lever.evaluate((node) => { node.disabled = false })
+    assert.ok(await dialog.isHidden(), gesture)
+    assert.equal(await count(), before, gesture)
+  }
+  await complete(() => lever.click())
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await lever.click()
+  const winner = await page.locator('#draw-station').textContent()
+  const before = await count()
+  assert.ok(await page.locator('#redraw').isDisabled())
+  await page.locator('#redraw').evaluate((node) => node.click())
+  assert.equal(await count(), before)
+  assert.equal(await page.locator('#draw-station').textContent(), winner)
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(2200)
+  assert.ok(await dialog.isHidden())
+  assert.equal(await page.locator('.draw-preview-row').count(), 0)
+  assert.ok(await page.locator('#result').isHidden())
+  await lever.click()
+  assert.equal(await page.locator('.draw-preview-row').count(), 18)
+  await page.locator('#skip-draw').click()
+  assert.equal(await page.locator(':focus').getAttribute('id'), 'open-draw-result')
+  await page.close()
+}
+
 async function main() {
   const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_USE_BUNDLED_CHROMIUM === '1' ? undefined : 'chrome', args: ['--host-resolver-rules=MAP tile.openstreetmap.org ~NOTFOUND'] })
   try {
+    for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }, { width: 280, height: 240 }]) await recordMotion(browser, viewport)
+    await checkLever(browser)
+    await checkOutsideTouchScroll(browser)
+    await checkTwoCandidateMotion(browser)
+    await checkMultiTouchLevers(browser)
+    await checkLongWinnerShort(browser)
     const page = await browser.newPage({
       viewport: { width: 390, height: 844 },
       permissions: ['clipboard-read', 'clipboard-write'],
@@ -90,7 +431,7 @@ async function main() {
     assert.deepEqual(lineCounts, Object.fromEntries(Object.entries(expectedCoverage.byLine).map(([id, coverage]) =>
       [id, `${coverage.complete}/${coverage.total}`])))
     const allPool = await page.locator('#draw-pool').innerText()
-    assert.equal(await page.locator('#draw').getAttribute('aria-describedby'), 'draw-pool')
+    assert.equal(await page.locator('#draw').getAttribute('aria-describedby'), 'draw-pool draw-hint')
     assert.equal(Number(allPool.match(/^\d+/)[0]), allStations)
     assert.match(allPool, /환승역은 한 번만 포함/)
     await openDrawSettings(page)
@@ -121,18 +462,12 @@ async function main() {
     assert.equal(await dialog.locator('#draw-station').getAttribute('aria-hidden'), 'true')
     const progressTrack = dialog.locator('.ticket-track')
     assert.ok(await dialog.locator('#draw-reel').evaluate((reel) => reel.getAnimations().length > 0))
-    const firstFrame = await page.locator('#draw-station').innerText()
     const skipButton = dialog.getByRole('button', { name: '결과 바로 보기' })
     const firstSkipPosition = await skipButton.boundingBox()
     const spinningColor = await dialog.evaluate((ticket) => getComputedStyle(ticket).getPropertyValue('--draw-color'))
-    await page.waitForFunction((name) => document.querySelector('#draw-station').textContent !== name, firstFrame)
-    const secondFrame = await page.locator('#draw-station').innerText()
+    await checkReelSeek(page)
     assert.deepEqual(await skipButton.boundingBox(), firstSkipPosition)
     assert.equal(await dialog.evaluate((ticket) => getComputedStyle(ticket).getPropertyValue('--draw-color')), spinningColor)
-    await page.waitForFunction((names) => {
-      const station = document.querySelector('#draw-station')
-      return station.getAttribute('aria-hidden') === 'true' && !names.includes(station.textContent)
-    }, [firstFrame, secondFrame])
     await dialog.getByRole('heading', { name: /^오늘 내릴 역은/ }).waitFor()
     assert.equal(await dialog.locator('#draw-station').getAttribute('aria-hidden'), null)
     assert.match(await dialog.evaluate((ticket) => ticket.style.getPropertyValue('--draw-color')), /^#/)
@@ -156,8 +491,8 @@ async function main() {
     assert.equal(await dialog.locator('#draw-station').evaluate((node) => node.style.getPropertyValue('--chars')), String([...drawnName].length))
     assert.ok(decodeURI(await stationMap.getAttribute('href')).includes(drawnName))
     assert.ok(await dialog.locator('#draw-saved-course').isHidden())
-    assert.equal(await dialog.getByRole('button', { name: '코스 보기' }).getAttribute('aria-describedby'), 'draw-station draw-line draw-coverage')
-    await dialog.getByRole('button', { name: '코스 보기' }).press('Enter')
+    assert.equal(await dialog.getByRole('button', { name: '확인하기' }).getAttribute('aria-describedby'), 'draw-station draw-line draw-coverage draw-confirm-hint')
+    await dialog.getByRole('button', { name: '확인하기' }).press('Enter')
     await page.locator('#result').waitFor()
     assert.equal(await page.locator('#station-name').innerText(), drawnName)
     assert.equal(await page.locator(':focus').getAttribute('id'), 'station-name')
@@ -171,12 +506,12 @@ async function main() {
     await page.locator('#draw').click()
     await dialog.getByRole('button', { name: '결과 바로 보기' }).click()
     assert.ok(await dialog.locator('#draw-saved-course').isVisible())
-    assert.equal(await dialog.locator('#open-draw-result').getAttribute('aria-describedby'), 'draw-station draw-line draw-coverage draw-saved-course')
+    assert.equal(await dialog.locator('#open-draw-result').getAttribute('aria-describedby'), 'draw-station draw-line draw-coverage draw-saved-course draw-confirm-hint')
     assert.match(await dialog.locator('#draw-coverage').innerText(), /^기본 후보 · /)
     assert.match(await dialog.locator('#draw-saved-course').innerText(), /후보 거리 직선 800m 이내/)
     assert.match(await dialog.locator('#draw-saved-course .draw-saved-preview').innerText(), /^저장한 장소 3곳 · .+ → .+ → .+/)
     assert.equal(await dialog.locator('.draw-saved-preview').innerText(), `저장한 장소 3곳 · ${savedNames.join(' → ')}`)
-    await dialog.getByRole('button', { name: '저장한 코스 보기', exact: true }).click()
+    await dialog.getByRole('button', { name: '확인하기', exact: true }).click()
     assert.equal(await page.getByLabel('후보 거리').inputValue(), '800')
     assert.equal(await page.getByLabel('방문 순서').inputValue(), 'cafe,food,activity')
 
@@ -638,10 +973,11 @@ async function main() {
     const firstPreview = await drawPage.locator('#draw-station').innerText()
     assert.ok(await drawPage.locator('#draw-map-search').isHidden())
     assert.equal(await drawPage.locator('#draw-map-search a').count(), 0)
-    await drawPage.waitForFunction((name) => {
-      const dialog = document.querySelector('#draw-reveal')
-      return !dialog.classList.contains('landed') && document.querySelector('#draw-station').textContent !== name
-    }, firstPreview)
+    assert.equal(await drawPage.locator('#draw-reel .draw-preview-row').count(), 18)
+    const twoPreviews = await drawPage.locator('#draw-reel .draw-preview-row').allTextContents()
+    assert.equal(new Set(twoPreviews).size, 2)
+    assert.ok(twoPreviews.slice(1).every((name, index) => name !== twoPreviews[index]))
+    await checkReelSeek(drawPage)
     assert.equal(await drawPage.locator(':focus').getAttribute('id'), 'dismiss-draw')
     await drawPage.keyboard.press('Tab')
     assert.equal(await drawPage.locator(':focus').getAttribute('id'), 'skip-draw')
@@ -661,20 +997,21 @@ async function main() {
     }
     assert.match(await drawPage.locator('#draw-remaining').innerText(), /1곳/)
     assert.match(await drawPage.locator('#draw-remaining').innerText(), /다음 뽑기에서 역마다 1\/1$/)
-    assert.ok(await drawPage.getByRole('button', { name: '남은 역 뽑기' }).isVisible())
-    assert.equal(await drawPage.locator('#redraw').getAttribute('aria-describedby'), 'draw-remaining')
+    assert.ok(await drawPage.getByRole('button', { name: '손잡이 당겨 남은 역 뽑기' }).isVisible())
+    assert.equal(await drawPage.locator('#redraw').getAttribute('aria-describedby'), 'draw-remaining redraw-hint')
     await drawPage.setViewportSize({ width: 280, height: 240 })
-    const openCourse = drawPage.getByRole('button', { name: '코스 보기' })
+    const openCourse = drawPage.locator('#open-draw-result')
     const dialogBounds = await drawPage.locator('#draw-reveal').boundingBox()
     const courseBounds = await openCourse.boundingBox()
     const redrawBounds = await drawPage.locator('#redraw').boundingBox()
-    assert.ok(courseBounds.y < redrawBounds.y)
-    assert.equal(redrawBounds.width, courseBounds.width)
-    assert.equal(redrawBounds.x, courseBounds.x)
     assert.ok(courseBounds.y + courseBounds.height <= dialogBounds.y + dialogBounds.height)
+    assert.ok(redrawBounds.width >= 44 && redrawBounds.height >= 44)
+    assert.ok(redrawBounds.x >= dialogBounds.x && redrawBounds.x + redrawBounds.width <= dialogBounds.x + dialogBounds.width)
     await drawPage.locator('#draw-reveal').evaluate((dialog) => { dialog.scrollTop = dialog.scrollHeight })
     assert.ok(await drawPage.locator('#draw-reveal').evaluate((dialog) => dialog.scrollTop > 0))
     await drawPage.locator('#dismiss-draw').focus()
+    await drawPage.keyboard.press('Tab')
+    assert.equal(await drawPage.locator(':focus').getAttribute('id'), 'redraw')
     await drawPage.keyboard.press('Tab')
     const resultMapLink = drawPage.locator('#draw-map-search a').first()
     assert.ok(await resultMapLink.evaluate((link) => {
@@ -683,8 +1020,7 @@ async function main() {
       return link === document.activeElement && bounds.height >= 44 && bounds.bottom <= actions.top
     }))
     const penultimateWinner = await drawPage.locator('#draw-station').innerText()
-    await openCourse.focus()
-    await drawPage.keyboard.press('Tab')
+    await drawPage.locator('#redraw').focus()
     assert.equal(await drawPage.locator(':focus').getAttribute('id'), 'redraw')
     await drawPage.keyboard.press('Enter')
     assert.equal(await drawPage.locator(':focus').getAttribute('id'), 'dismiss-draw')
@@ -694,7 +1030,7 @@ async function main() {
     assert.notEqual(await drawPage.locator('#draw-station').innerText(), penultimateWinner)
     assert.match(await drawPage.locator('#draw-remaining').innerText(), /모든 후보 역을 한 번씩/)
     assert.match(await drawPage.locator('#draw-remaining').innerText(), new RegExp(`직전에 나온 역을 제외한 ${count - 1}곳`))
-    assert.ok(await drawPage.getByRole('button', { name: '새로 한 바퀴 뽑기' }).isVisible())
+    assert.ok(await drawPage.getByRole('button', { name: '손잡이 당겨 새로 한 바퀴 뽑기' }).isVisible())
     assert.match(await drawPage.locator('#draw-announcement').textContent(), /모든 후보 역을 한 번씩/)
     const lastWinner = await drawPage.locator('#draw-station').innerText()
     const recentDraw = drawPage.locator('#recent-draws button').first()
@@ -732,7 +1068,7 @@ async function main() {
     const skip = drawPage.getByRole('button', { name: '결과 바로 보기' })
     await skip.focus()
     await drawPage.emulateMedia({ reducedMotion: 'reduce' })
-    await openCourse.waitFor({ timeout: 1000 })
+    await drawPage.waitForFunction(() => document.querySelector('#draw-reveal').classList.contains('landed'), null, { timeout: 1000 })
     assert.equal(await drawPage.locator('#draw-station').evaluate((label) => getComputedStyle(label).animationName), 'none')
     assert.equal(await drawPage.locator('#draw-line').evaluate((label) => getComputedStyle(label).animationName), 'none')
     const reducedTrack = drawPage.locator('#draw-reveal .ticket-track')
@@ -751,7 +1087,8 @@ async function main() {
     })
     await drawPage.emulateMedia({ reducedMotion: 'no-preference' })
     await drawPage.locator('#draw').click()
-    await skip.click()
+    assert.ok(await skip.isHidden())
+    assert.ok(await openCourse.isEnabled())
     await openCourse.click()
     await drawPage.locator('#draw-reveal').waitFor({ state: 'hidden' })
     assert.ok(await drawPage.locator('#result').isVisible())
@@ -809,7 +1146,7 @@ async function main() {
     const groups = await emptyResult.locator('.draw-line-group').evaluateAll((rows) =>
       rows.map((row) => row.getBoundingClientRect().top))
     assert.ok(groups[0] < groups[1])
-    await emptyResult.getByRole('button', { name: '코스 보기' }).click()
+    await emptyResult.getByRole('button', { name: '확인하기' }).click()
     await openDrawSettings(emptyDraw)
     await emptyDraw.locator('#hide-all').click()
     assert.ok(await emptyDraw.locator('#draw-from-course').isDisabled())
@@ -1024,7 +1361,13 @@ async function main() {
       contentType: 'application/javascript',
       body: 'export default { "0150": { activity: [["검증 장소", "주소", "설명"]] } }',
     }))
-    await partialDraw.addInitScript(() => { Math.random = () => 0 })
+    await partialDraw.addInitScript(() => {
+      Math.random = () => 0
+      const listen = window.addEventListener.bind(window)
+      window.addEventListener = (type, handler, ...options) => listen(type, type === 'storage'
+        ? (event) => window.delayStorage ? setTimeout(() => handler(event), 350) : handler(event)
+        : handler, ...options)
+    })
     await partialDraw.goto(home)
     await partialDraw.evaluate(() => localStorage.setItem('subway-date:edited-courses', '["0150"]'))
     await partialDraw.reload()
@@ -1080,16 +1423,17 @@ async function main() {
     assert.equal(await partialDraw.locator('#save-shared-course').innerText(), '받은 코스 저장')
     assert.ok(await partialDraw.locator('#save-shared-course').evaluate((button) => button === document.activeElement))
     await partialDraw.locator('#draw').click()
-    assert.ok(await partialDraw.getByRole('button', { name: '코스 보기', exact: true }).isVisible())
+    assert.ok(await partialDraw.locator('#open-draw-result').isVisible())
     assert.ok(await partialDraw.locator('#draw-saved-course').isHidden())
     assert.equal(await partialDraw.locator('#draw-coverage').innerText(), '놀거리 1곳 · 먹거리 후보 없음 · 카페 후보 없음')
+    await partialDraw.evaluate(() => { window.delayStorage = true })
     await openCourseSettings(sharedEditor)
     await sharedEditor.getByLabel('후보 거리').selectOption('500')
-    await partialDraw.getByRole('button', { name: '저장한 코스 보기', exact: true }).waitFor()
+    await partialDraw.waitForFunction(() => !document.querySelector('#draw-saved-course').hidden && document.querySelector('#draw-saved-course').textContent.includes('500m'))
     assert.match(await partialDraw.locator('#draw-saved-course').innerText(), /500m/)
     assert.match(await partialDraw.locator('#draw-coverage').innerText(), /^기본 후보/)
     await sharedEditor.evaluate(() => localStorage.clear())
-    await partialDraw.getByRole('button', { name: '코스 보기', exact: true }).waitFor()
+    await partialDraw.waitForFunction(() => document.querySelector('#draw-saved-course').hidden && document.querySelector('#draw-coverage').textContent === '놀거리 1곳 · 먹거리 후보 없음 · 카페 후보 없음')
     assert.equal(await partialDraw.locator('#draw-coverage').innerText(), '놀거리 1곳 · 먹거리 후보 없음 · 카페 후보 없음')
     const nearbyCafe = partialDraw.getByRole('link', { name: /서울역.*주변 카페 검색 네이버 지도에서 보기/ })
     assert.match(decodeURIComponent(await nearbyCafe.getAttribute('href')), /서울역.*카페$/)
@@ -1152,7 +1496,7 @@ async function main() {
     assert.equal(await drawMaglevGuide.getAttribute('href'), await maglevGuide.getAttribute('href'))
     assert.match(await maglevResult.locator('#draw-line').innerText(), /^(선택한 노선 )?인천공항 자기부상철도/)
     assert.match(await maglevResult.locator('#draw-coverage').innerText(), /놀거리까지 대중교통 이동/)
-    await maglevResult.getByRole('button', { name: '코스 보기', exact: true }).click()
+    await maglevResult.getByRole('button', { name: '확인하기', exact: true }).click()
     await trailPage.locator('#station-name').getByText('인천공항1터미널역', { exact: true }).waitFor()
     await openCourseSettings(trailPage)
     await trailPage.getByLabel('후보 거리').selectOption('500')
@@ -1252,7 +1596,7 @@ async function main() {
     await nearbyDraw.getByRole('searchbox').press('Enter')
     assert.equal(await nearbyDraw.getByLabel('후보 거리').inputValue(), '')
     await nearbyDraw.locator('#draw').click()
-    await nearbyDraw.getByRole('button', { name: '코스 보기', exact: true }).click()
+    await nearbyDraw.locator('#open-draw-result').click()
     await nearbyDraw.locator('#station-name').getByText(nearbyWinner, { exact: true }).waitFor()
     await nearbyDraw.waitForFunction(() => document.querySelector('#course-radius').value === '800')
     assert.equal(await nearbyDraw.getByLabel('후보 거리').inputValue(), '800')
@@ -1452,8 +1796,8 @@ async function main() {
     await singleSearch.fill('')
     await singleDraw.locator('#draw').click()
     assert.match(await singleDraw.locator('#draw-remaining').innerText(), /뽑을 수 있는 역이 한 곳/)
-    assert.ok(await singleDraw.locator('#redraw').isHidden())
-    await singleDraw.getByRole('button', { name: '코스 보기' }).click()
+    assert.ok(await singleDraw.locator('#redraw').isDisabled())
+    await singleDraw.locator('#open-draw-result').click()
     await singleDraw.getByRole('heading', { name: '안국역', exact: true }).waitFor()
     assert.equal(await singleDraw.locator('#station-name').innerText(), '안국역')
     assert.ok(await singleDraw.locator('#draw-from-course').isDisabled())
