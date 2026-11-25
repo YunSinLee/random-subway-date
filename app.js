@@ -503,6 +503,7 @@ function updateCourseContext() {
     action = '저장 동작 보기'
     target = 'save-shared-course'
   }
+  if (customFormDrafts.size) text += ' · 입력 중인 장소는 미저장'
   for (const row of [summary, courseEditContext]) {
     row.querySelector('span').textContent = text
     const button = row.querySelector('button')
@@ -643,6 +644,8 @@ function visitOrder() {
 }
 
 const customPlaces = new Map()
+// Unsubmitted fields belong only to this open course, never to its saved/shared data.
+const customFormDrafts = new Map()
 const preferredPlaces = new Map()
 const unresolvedSharedPlaces = new Map()
 const courseQueryKeys = ['order', 'radius', ...courseCategories.flatMap(([key]) => [key, `custom-${key}`, `preferred-${key}`])]
@@ -728,6 +731,7 @@ function saveDraft(station, edited = true, saveShared = false) {
 
 function selectStation(station, centerOnMap = false, scroll = true, sharedCourse = null, useNearbyDefaults = false) {
   if (drawing) return
+  customFormDrafts.clear()
   byId('storage-recovery').hidden = true
   courseEditTarget = null
   courseEditContext.remove()
@@ -919,6 +923,10 @@ function readCustomPlace(value) {
 }
 
 function renderCourse(station, queryPrefix, sharedCourse) {
+  for (const [key, draft] of customFormDrafts) {
+    const entry = byId('course').querySelector(`[data-category="${key}"] .custom-place`)
+    if (entry) draft.open = entry.open
+  }
   courseSelection.clear()
   customPlaces.clear()
   preferredPlaces.clear()
@@ -1033,13 +1041,37 @@ function renderCourse(station, queryPrefix, sharedCourse) {
     const submit = document.createElement('button')
     submit.type = 'submit'
     submit.textContent = '코스에 넣기'
+    const draftHint = document.createElement('small')
+    draftHint.id = 'place-draft-hint-' + key
+    draftHint.textContent = '코스에 넣기 전 입력은 이 화면에서만 임시 유지돼요. 저장·공유에는 포함되지 않아요.'
+    form.setAttribute('aria-describedby', draftHint.id)
+    const discardInput = document.createElement('button')
+    discardInput.type = 'button'
+    discardInput.textContent = '입력 되돌리기'
+    discardInput.setAttribute('aria-label', category + ' 미제출 입력 되돌리기')
+    function rememberInput() {
+      const changed = placeName.value !== (custom?.[0] ?? '') || address.value !== (custom?.[1] ?? '')
+      if (changed) customFormDrafts.set(key, { name: placeName.value, address: address.value, open: customEntry.open })
+      else customFormDrafts.delete(key)
+      discardInput.hidden = !changed
+      updateCourseContext()
+    }
+    form.addEventListener('input', rememberInput)
+    discardInput.addEventListener('click', () => {
+      placeName.value = custom?.[0] ?? ''
+      address.value = custom?.[1] ?? ''
+      placeName.setCustomValidity('')
+      rememberInput()
+      placeName.focus({ preventScroll: true })
+    })
     function applyCustomChange(params) {
+      customFormDrafts.delete(key)
       renderCourse(station, queryPrefix, params)
       clearShareFeedback()
       saveDraft(station)
       byId('course').querySelector(`[data-category="${key}"] .custom-place summary`).focus()
     }
-    form.append(placeName, address, addressHint, submit)
+    form.append(placeName, address, addressHint, draftHint, submit, discardInput)
     if (custom) {
       placeName.value = custom[0]
       address.value = custom[1]
@@ -1055,6 +1087,13 @@ function renderCourse(station, queryPrefix, sharedCourse) {
         applyCustomChange(params)
       })
       form.append(remove)
+    }
+    const pendingInput = customFormDrafts.get(key)
+    discardInput.hidden = !pendingInput
+    if (pendingInput) {
+      placeName.value = pendingInput.name
+      address.value = pendingInput.address
+      customEntry.open = pendingInput.open
     }
     customEntry.append(addLabel, form)
     customEntry.addEventListener('keydown', (event) => {
@@ -1342,6 +1381,7 @@ function renderCourse(station, queryPrefix, sharedCourse) {
             placeName.value = name
             address.value = originalAddress
             placeName.setCustomValidity('')
+            rememberInput()
             placeName.focus()
           })
           actions.append(restoreOriginal)
@@ -2412,6 +2452,7 @@ byId('restore-omitted').addEventListener('click', () => {
 
 byId('reset-course').addEventListener('click', () => {
   if (!selected || !window.confirm('이 역에서 변경한 장소와 설정을 기본값으로 되돌릴까요?')) return
+  customFormDrafts.clear()
   renderCourse(selected, stationMapQuery(selected), null)
   clearShareFeedback()
   saveDraft(selected, false)

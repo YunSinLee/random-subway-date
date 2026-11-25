@@ -94,6 +94,49 @@ async function checkSharedNavigation(browser) {
   } finally { await context.close() }
 }
 
+async function checkUnsubmittedPlace(browser) {
+  const context = await browser.newContext({ viewport: { width: 320, height: 760 } })
+  try {
+    const page = await context.newPage()
+    await page.goto(new URL('?course=0208', home).href)
+    const entry = page.locator('[data-category="food"] .custom-place')
+    await entry.locator('summary').click()
+    const name = entry.getByRole('textbox', { name: '먹거리 장소 이름' })
+    const address = entry.getByRole('textbox', { name: '먹거리 장소 주소' })
+    await name.fill('QA 미제출 식당')
+    await address.fill('QA 미제출 주소')
+    await openCourseSettings(page)
+    await page.getByLabel('후보 거리', { exact: true }).selectOption('500')
+    assert.equal(await name.inputValue(), 'QA 미제출 식당')
+    assert.equal(await address.inputValue(), 'QA 미제출 주소')
+    assert.ok(await entry.getAttribute('open') !== null)
+    assert.match(await page.locator('#course-context-text').innerText(), /입력 중인 장소는 미저장/)
+    assert.ok(!(await page.evaluate(() => localStorage.getItem('subway-date:draft:0208'))).includes('QA 미제출'))
+    assert.ok(!decodeURIComponent(page.url()).includes('QA 미제출'))
+    await name.focus()
+    await page.keyboard.press('Escape')
+    await page.getByLabel('후보 거리', { exact: true }).selectOption('300')
+    assert.equal(await entry.getAttribute('open'), null)
+    await entry.locator('summary').click()
+    assert.equal(await name.inputValue(), 'QA 미제출 식당')
+    await entry.getByRole('button', { name: '코스에 넣기', exact: true }).click()
+    assert.doesNotMatch(await page.locator('#course-context-text').innerText(), /입력 중/)
+    await entry.locator('summary').click()
+    await name.fill('QA 수정 중')
+    await page.getByLabel('후보 거리', { exact: true }).selectOption('500')
+    assert.equal(await name.inputValue(), 'QA 수정 중')
+    await entry.getByRole('button', { name: '먹거리 미제출 입력 되돌리기', exact: true }).click()
+    assert.equal(await name.inputValue(), 'QA 미제출 식당')
+    assert.equal(await address.inputValue(), 'QA 미제출 주소')
+    assert.ok(await name.evaluate(node => node === document.activeElement))
+    await name.fill('QA 버릴 입력')
+    await page.reload()
+    await entry.locator('summary').click()
+    assert.equal(await name.inputValue(), 'QA 미제출 식당')
+    console.log('Passed: unsubmitted place survives same-course radius render without saving, submits and discards independently')
+  } finally { await context.close() }
+}
+
 async function main() {
   const browser = await chromium.launch({ channel: 'chrome', args: ['--host-resolver-rules=MAP tile.openstreetmap.org ~NOTFOUND, MAP oapi.map.naver.com ~NOTFOUND'] })
   try {
@@ -1628,6 +1671,7 @@ async function main() {
     assert.ok(await singleDraw.locator('#draw-origin').isHidden())
     assert.deepEqual(errors, [])
     await checkSharedNavigation(browser)
+    await checkUnsubmittedPlace(browser)
     console.log('Passed: draw animation, station and distance filters, touch map, course editing, reload, and sharing')
   } finally {
     await browser.close()
