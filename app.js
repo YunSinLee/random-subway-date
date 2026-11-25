@@ -1894,10 +1894,11 @@ function renderCourseMap(station) {
   missing.hidden = !unmapped.length
   missing.replaceChildren()
   if (unmapped.length) {
-    missing.append('좌표가 없어 지도에 표시되지 않은 장소 · ')
+    missing.append('좌표가 없어 지도에 표시되지 않은 장소 · 방문 순번 ')
     for (const [index, [key, stop]] of unmapped.entries()) {
       if (index) missing.append(', ')
-      missing.append(courseJumpButton(key, stop.name, { fromMap: true }))
+      const label = `${included.indexOf(key) + 1}. ${categoryLabels.get(key)} · ${stop.name}`
+      missing.append(courseJumpButton(key, label, { fromMap: true }))
     }
   }
 

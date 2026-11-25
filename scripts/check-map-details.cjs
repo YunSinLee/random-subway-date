@@ -107,6 +107,14 @@ async function checkDetails(page, key, closeWithEscape) {
           assert.ok(await page.locator('#map-place').isHidden())
           assert.equal(await page.locator(':focus').getAttribute('data-map-stop'), 'food')
           assert.match(await page.locator('#course-map-missing').innerText(), /좌표가 없어.*좌표 없는 후보/)
+          await page.locator('#edit-course-summary').click()
+          for (const [order, step] of [['food,cafe,activity', 1], ['cafe,activity,food', 3], ['activity,food,cafe', 2]]) {
+            await page.locator('#course-order').selectOption(order)
+            const missing = page.locator('#course-map-missing [data-map-stop="food"]')
+            const label = `${step}. 먹거리 · 좌표 없는 후보`
+            assert.equal(await missing.innerText(), label)
+            assert.equal(await missing.getAttribute('aria-label'), label + ' · 장소 카드로 이동')
+          }
         }
       }
       console.log(`PASS ${separation < .001 ? 'near overlap' : 'separated'} coordinates: both details remain selectable`)
