@@ -2687,7 +2687,7 @@ function courseText({ includeCourseLink = true } = {}) {
   else if (courseSelection.size) header.push('직선 거리를 계산할 수 있는 구간이 없어요.')
   const activeStops = visitOrder().filter((key) => !omittedStops.has(key))
   const pendingStops = activeStops.length - courseSelection.size
-  if (pendingStops) header.push(`선택한 장소 ${courseSelection.size}곳 · 장소를 고를 항목 ${pendingStops}개`)
+  if (pendingStops) header.push(`선택한 장소 ${courseSelection.size}곳 · 후보 없는 항목 ${pendingStops}개`)
   const selectedStops = [...courseSelection.values()]
   const transitStops = selectedStops.filter((stop) => stop.access === 'transit').length
   if (transitStops) header.push(`대중교통으로 이동할 장소 ${transitStops}곳`)
