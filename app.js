@@ -377,6 +377,12 @@ function refreshDrawPool() {
   }
   const drawPoolNotice = byId('draw-pool')
   if (drawPoolNotice.textContent !== message) drawPoolNotice.textContent = message
+  const settingsMessage = count
+    ? `뽑기 후보 ${count}개 역 · ${enabled.size}개 노선 선택`
+    : enabled.size ? '조건에 맞는 역이 없어요. 장소 후보 조건을 끄거나 다른 노선을 켜보세요.'
+      : '선택한 노선이 없어요. 뽑을 노선을 하나 이상 켜주세요.'
+  const settingsPool = byId('settings-pool')
+  if (settingsPool.textContent !== settingsMessage) settingsPool.textContent = settingsMessage
   byId('fit-seoul').disabled = !visible.some(isInCentralSeoul)
   byId('fit-selected').disabled = !enabledStations.length
   byId('map-hint').hidden = enabledStations.length > count

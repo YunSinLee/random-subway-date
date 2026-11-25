@@ -188,7 +188,7 @@
       <p id="course-distance" class="course-distance" aria-live="polite" hidden></p>
     </section>
   </main>
-  <dialog id="draw-settings" class="draw-settings" aria-labelledby="draw-settings-title">
+  <dialog id="draw-settings" class="draw-settings" aria-labelledby="draw-settings-title" aria-describedby="settings-pool">
     <form method="dialog" class="settings-header">
       <h2 id="draw-settings-title">뽑기 설정</h2>
       <button type="submit" id="close-settings" autofocus>닫기</button>
@@ -214,6 +214,10 @@
         <div id="lines" class="line-list" role="group" aria-label="표시할 노선"></div>
       </div>
     </section>
+    <div class="settings-footer">
+      <p id="settings-pool" role="status" aria-live="polite" aria-atomic="true"></p>
+      <form method="dialog"><button type="submit" id="finish-settings" class="primary">설정 완료</button></form>
+    </div>
   </dialog>
   <dialog id="draw-reveal" class="draw-reveal" aria-labelledby="draw-status">
     <div class="draw-ticket">

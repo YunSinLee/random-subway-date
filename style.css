@@ -477,6 +477,14 @@ footer { padding: 15px 0 23px; }
 .draw-settings h3 { font-size: 14px; margin: 10px 0 6px; }
 .draw-settings-options { display: grid; gap: 6px; }
 .draw-settings-options .draw-option { min-height: 32px; }
+.settings-footer {
+  position: sticky; bottom: -16px; z-index: 1; margin: 16px -16px -16px;
+  padding: 12px 16px; background: #fdfcf8; border-top: 1px solid var(--border);
+  display: flex; align-items: center; gap: 12px;
+}
+.settings-footer p { flex: 1; margin: 0; font-size: 12px; color: var(--green); }
+.settings-footer form { flex-shrink: 0; }
+.settings-footer button { min-height: 44px; padding: 10px 16px; }
 .line-settings { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 12px; }
 .filter-header { justify-content: flex-start; gap: 8px; }
 #line-options .line-list {
