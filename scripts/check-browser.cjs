@@ -2,6 +2,7 @@
 const assert = require('node:assert/strict')
 const { execFileSync } = require('node:child_process')
 const path = require('node:path')
+const fs = require('node:fs')
 const { chromium } = require('playwright')
 
 const home = process.argv[2] ?? 'http://127.0.0.1:18473/'
@@ -11,6 +12,7 @@ const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(new URL(home).host
 const localDescription = loopback ? ' share-local-note' : ''
 
 async function openDrawSettings(page) {
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent)
   if (await page.locator('#draw-settings').isHidden()) await page.locator('#open-settings').click()
 }
 
@@ -19,6 +21,7 @@ async function closeDrawSettings(page) {
 }
 
 async function openCourseSettings(page) {
+  await page.locator('#result').waitFor({ state: 'visible' })
   const settings = page.locator('#course-settings')
   if (await settings.getAttribute('open') === null) await settings.locator('summary').click()
 }
@@ -34,9 +37,592 @@ async function chooseNextCandidate(page, key, label) {
   await options.nth((selected + 1) % before.length).click()
 }
 
+async function checkReelSeek(page) {
+  const measurements = await page.locator('#draw-reel').evaluate(async (reel) => {
+    const animation = reel.getAnimations()[0]
+    animation.pause()
+    const rows = [...reel.children]
+    const names = rows.map((row) => row.textContent)
+    const samples = []
+    for (const time of [0, 100, 200, 800, 900, 1600, 1700, 1900, 1999]) {
+      animation.currentTime = time
+      await new Promise(requestAnimationFrame)
+      const rects = rows.map((row) => row.getBoundingClientRect())
+      const display = reel.parentElement.getBoundingClientRect()
+      samples.push({ y: rects[0].top, heights: rects.map((r) => r.height), tops: rects.map((r) => r.top), center: (rects[19].top + rects[19].bottom - display.top - display.bottom) / 2 })
+      if (rows.some((row, i) => reel.children[i] !== row || row.textContent !== names[i])) throw Error('reel rows changed')
+    }
+    animation.currentTime = 0
+    animation.play()
+    return { names, samples }
+  })
+  assert.equal(measurements.names.length, 21)
+  assert.ok(new Set(measurements.names.slice(0, 18)).size >= 2)
+  for (const sample of measurements.samples) {
+    const height = sample.heights[0]
+    assert.ok(sample.heights.every((value) => Math.abs(value - height) < 1))
+    assert.ok(sample.tops.slice(1).every((value, i) => Math.abs(value - sample.tops[i] - height) < 1))
+  }
+  const y = measurements.samples.map((sample) => sample.y)
+  assert.ok(y.slice(1).every((value, i) => value < y[i]))
+  assert.ok(y[1] - y[2] > y[3] - y[4] && y[3] - y[4] > y[5] - y[6] && y[5] - y[6] > 0)
+  assert.ok(Math.abs(measurements.samples.at(-1).center) < 1)
+}
+
+async function recordMotion(browser, viewport) {
+  const page = await browser.newPage({ viewport, reducedMotion: 'no-preference' })
+  await page.addInitScript(() => { Math.random = () => 0 })
+  await page.goto(home)
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent)
+  await page.evaluate(() => document.fonts.ready)
+  await page.locator('#draw').click()
+  await page.locator('#draw-reveal').waitFor()
+  const dir = `/tmp/subway-slot-motion-${viewport.width}x${viewport.height}`
+  fs.mkdirSync(dir, { recursive: true })
+  await page.evaluate(() => {
+    const reel = document.querySelector('#draw-reel')
+    const display = reel.parentElement
+    const rows = [...reel.children]
+    const names = rows.map((row) => row.textContent)
+    const start = performance.now()
+    window.motionSamples = []
+    window.motionDone = new Promise((resolve) => {
+      function sample(now) {
+        const rect = display.getBoundingClientRect()
+        const visible = rows.filter((row) => row.isConnected).map((row) => ({ name: row.textContent, rect: row.getBoundingClientRect() }))
+        const nearest = visible.reduce((a, b) => Math.abs((b.rect.top + b.rect.bottom) / 2 - (rect.top + rect.bottom) / 2) < Math.abs((a.rect.top + a.rect.bottom) / 2 - (rect.top + rect.bottom) / 2) ? b : a)
+        const winner = document.querySelector('#draw-station').getBoundingClientRect()
+        window.motionSamples.push({ t: now - start, y: visible[0].rect.top, center: nearest.name, winnerOffset: (winner.top + winner.bottom - rect.top - rect.bottom) / 2, stable: rows.every((row, i) => !row.isConnected || (reel.children[i] === row && row.textContent === names[i])), landed: document.querySelector('#draw-reveal').classList.contains('landed') })
+        if (now - start < 2250) requestAnimationFrame(sample)
+        else resolve()
+      }
+      requestAnimationFrame(sample)
+    })
+  })
+  for (const delay of [0, 450, 650, 650]) {
+    if (delay) await page.waitForTimeout(delay)
+    await page.screenshot({ path: `${dir}/frame-${delay}-${Date.now()}.png` })
+  }
+  const samples = await page.evaluate(async () => { await window.motionDone; return window.motionSamples })
+  fs.writeFileSync(`${dir}/samples.json`, JSON.stringify(samples, null, 2))
+  const spinning = samples.filter((sample) => !sample.landed)
+  assert.ok(spinning.length > 20 && spinning.every((sample) => sample.stable))
+  assert.ok(new Set(spinning.map((sample) => sample.center)).size >= 3)
+  assert.ok(spinning.slice(1).every((sample, i) => sample.y <= spinning[i].y + 0.5 && sample.t - spinning[i].t < 200))
+  for (const [start, end] of [[0, 500], [500, 1200], [1200, 1900]]) {
+    const part = spinning.filter((sample) => sample.t >= start && sample.t < end)
+    assert.ok(part.length > 1 && part[0].y - part.at(-1).y > 1)
+  }
+  const landed = samples.filter((sample) => sample.landed)
+  assert.ok(landed.length && landed.every((sample) => Math.abs(sample.winnerOffset) <= 3.1))
+  assert.ok(Math.abs(spinning.at(-1).winnerOffset) < 1)
+  assert.ok(Math.abs(landed.at(-1).winnerOffset) < 1)
+  assert.equal(await page.locator('.draw-preview-row').count(), 0)
+  const longName = await page.evaluate(async () => {
+    const network = (await import('./data/network.js')).default
+    const names = network.stations.map((station) => station.name.endsWith('역') ? station.name : station.name + '역')
+    return names.sort((a, b) => [...b].length - [...a].length)[0]
+  })
+  const nameGeometry = await page.locator('#draw-station').evaluate((node, name) => {
+    node.textContent = name
+    node.style.setProperty('--chars', [...name].length)
+    const range = document.createRange()
+    range.selectNodeContents(node)
+    const row = node.getBoundingClientRect()
+    return { row: { top: row.top, bottom: row.bottom, left: row.left, right: row.right, height: row.height }, lines: [...range.getClientRects()].map((r) => ({ top: r.top, bottom: r.bottom, left: r.left, right: r.right })) }
+  }, longName)
+  assert.ok(nameGeometry.lines.length <= 2 && nameGeometry.lines.length > 0, longName)
+  assert.ok(nameGeometry.lines.every((line) => line.top >= nameGeometry.row.top - 1 && line.bottom <= nameGeometry.row.bottom + 1 && line.left >= nameGeometry.row.left - 1 && line.right <= nameGeometry.row.right + 1), longName)
+  assert.ok(Math.abs(nameGeometry.row.height - (viewport.width >= 900 ? 67.5 : 54)) < 1)
+  await page.screenshot({ path: `${dir}/long-name.png` })
+  await page.close()
+}
+
+async function checkOutsideTouchScroll(browser) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })
+  await page.goto(home)
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent)
+  const session = await page.context().newCDPSession(page)
+  await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 15, y: 700 }] })
+  for (const y of [620, 540, 460, 380, 300]) {
+    await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 15, y }] })
+    await page.waitForTimeout(30)
+  }
+  await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+  await page.waitForTimeout(100)
+  assert.ok(await page.evaluate(() => scrollY > 0))
+  assert.ok(await page.locator('#draw-reveal').isHidden())
+  await page.close()
+}
+
+async function checkTwoCandidateMotion(browser) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' })
+  await page.addInitScript(() => { Math.random = () => 0 })
+  await page.goto(home)
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent)
+  await openDrawSettings(page)
+  await page.locator('#hide-all').click()
+  await page.getByRole('checkbox', { name: 'GTX-A', exact: true }).check()
+  await closeDrawSettings(page)
+  const count = Number((await page.locator('#draw-pool').innerText()).match(/^\d+/)[0])
+  await page.locator('#draw').click()
+  for (let i = 1; i < count - 2; i += 1) await page.locator('#redraw').click()
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.locator('#redraw').click()
+  const seen = await page.locator('#draw-reel').evaluate(async (reel) => {
+    const rows = [...reel.querySelectorAll('.draw-preview-row')]
+    const names = [...new Set(rows.map((row) => row.textContent))]
+    const seen = new Set()
+    await new Promise((resolve) => {
+      function sample() {
+        const display = reel.parentElement.getBoundingClientRect()
+        const center = (display.top + display.bottom) / 2
+        for (const row of rows) {
+          const r = row.getBoundingClientRect()
+          if (row.isConnected && r.top <= center && r.bottom >= center) seen.add(row.textContent)
+        }
+        if (reel.querySelector('.draw-preview-row')) requestAnimationFrame(sample)
+        else resolve()
+      }
+      requestAnimationFrame(sample)
+    })
+    return { names, seen: [...seen] }
+  })
+  assert.equal(seen.names.length, 2)
+  assert.deepEqual(new Set(seen.seen), new Set(seen.names))
+  await page.close()
+}
+
+async function checkMultiTouchLevers(browser) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, reducedMotion: 'reduce' })
+  await page.addInitScript(() => { window.randomCalls = 0; Math.random = () => { window.randomCalls += 1; return 0 } })
+  await page.goto(home)
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent)
+  await page.evaluate(() => document.fonts.ready)
+  const touch = await page.context().newCDPSession(page)
+  for (const id of ['draw', 'redraw']) {
+    const lever = page.locator('#' + id)
+    await lever.evaluate((node) => node.addEventListener('pointerdown', (event) => {
+      if (!event.isPrimary) window.secondaryPointerId = event.pointerId
+    }))
+    const rect = await lever.boundingBox()
+    const x = rect.x + rect.width / 2
+    const y = rect.y + 25
+    const before = await page.evaluate(() => window.randomCalls)
+    const previous = id === 'redraw' ? await page.locator('#draw-station').textContent() : null
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ id: 1, x, y }] })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ id: 1, x, y }, { id: 2, x: x + 5, y: y + 5 }] })
+    const secondaryId = await page.evaluate(() => window.secondaryPointerId)
+    assert.ok(secondaryId)
+    await lever.dispatchEvent('pointercancel', { pointerId: secondaryId, pointerType: 'touch', isPrimary: false })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ id: 1, x, y: y + 10 }, { id: 2, x: x + 5, y: y + 5 }] })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [{ id: 2, x: x + 5, y: y + 5 }] })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ id: 1, x, y: y + 20 }] })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    assert.ok(await page.locator('#draw-reveal').isVisible())
+    assert.equal(await page.evaluate(() => window.randomCalls), before + 1)
+    if (previous) assert.notEqual(await page.locator('#draw-station').textContent(), previous)
+  }
+  await page.close()
+}
+
+async function checkLongWinnerShort(browser) {
+  const page = await browser.newPage({ viewport: { width: 280, height: 240 }, reducedMotion: 'no-preference' })
+  await page.goto(home)
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent)
+  await page.evaluate(() => document.fonts.ready)
+  await page.evaluate(async () => {
+    const stations = (await import('./data/network.js')).default.stations
+    const index = stations.findIndex((station) => station.name === '동대문역사문화공원')
+    if (index < 0) throw Error('long winner fixture missing')
+    Math.random = () => (index + .25) / stations.length
+  })
+  await page.locator('#draw').click()
+  await page.waitForFunction(() => document.querySelector('#draw-reveal').classList.contains('landed'))
+  await page.waitForTimeout(250)
+  await page.locator('#draw-reveal').evaluate((dialog) => { dialog.scrollTop = 0 })
+  assert.equal(await page.locator('#draw-station').textContent(), '동대문역사문화공원역')
+  assert.match(await page.locator('#draw-status').textContent(), /동대문역사문화공원역/)
+  const visible = await page.locator('#draw-station').evaluate((node) => {
+    const range = document.createRange()
+    range.selectNodeContents(node)
+    const lines = [...range.getClientRects()]
+    return lines.length > 0 && lines.every((rect) => {
+      if (rect.top < 0 || rect.bottom > innerHeight || rect.left < 0 || rect.right > innerWidth) return false
+      return [0.1, 0.5, 0.9].every((x) => [0.2, 0.5, 0.8].every((y) =>
+        document.elementFromPoint(rect.left + rect.width * x, rect.top + rect.height * y)?.closest('#draw-station') === node))
+    })
+  })
+  await page.screenshot({ path: '/tmp/continuous-slot-long-winner-fixed.png' })
+  assert.ok(visible, 'actual winner text must remain visible above sticky actions')
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 280)
+  for (const id of ['redraw', 'open-draw-result']) {
+    const rect = await page.locator('#' + id).boundingBox()
+    assert.ok(rect.width >= 44 && rect.height >= 44)
+    assert.ok(await page.locator('#' + id).evaluate((node) => {
+      const rect = node.getBoundingClientRect()
+      return document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)?.closest('button') === node
+    }))
+  }
+  await page.locator('#dismiss-draw').focus()
+  await page.keyboard.press('Tab')
+  assert.equal(await page.locator(':focus').getAttribute('id'), 'redraw')
+  await page.keyboard.press('Tab')
+  assert.ok(await page.locator('#draw-map-search a').first().evaluate((link) => {
+    const bounds = link.getBoundingClientRect()
+    return link === document.activeElement && bounds.bottom <= document.querySelector('.ticket-actions').getBoundingClientRect().top
+  }))
+  assert.ok(await page.locator('#draw-reveal').evaluate((dialog) => dialog.scrollTop > 0))
+  await page.locator('#open-draw-result').focus()
+  assert.equal(await page.locator(':focus').getAttribute('id'), 'open-draw-result')
+  await page.close()
+}
+
+async function checkLever(browser) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, reducedMotion: 'reduce' })
+  await page.addInitScript(() => { window.randomCalls = 0; Math.random = () => { window.randomCalls += 1; return 0 } })
+  await page.goto(home)
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent)
+  const lever = page.locator('#draw')
+  const dialog = page.locator('#draw-reveal')
+  const count = () => page.evaluate(() => window.randomCalls)
+  const complete = async (action) => {
+    const before = await count()
+    await action()
+    assert.ok(await dialog.isVisible())
+    assert.equal(await count(), before + 1)
+    assert.ok(await page.locator('#open-draw-result').isEnabled())
+    await page.locator('#dismiss-draw').click()
+    await page.waitForFunction(() => !document.querySelector('#draw').disabled)
+  }
+  await complete(() => lever.click())
+  await complete(async () => { await lever.focus(); await page.keyboard.press('Enter') })
+  await complete(async () => { await lever.focus(); await page.keyboard.press('Space') })
+  await complete(() => lever.tap())
+  const bounds = await lever.boundingBox()
+  const x = bounds.x + bounds.width / 2
+  const y = bounds.y + bounds.height / 2
+  await complete(async () => {
+    await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x, y + 20)
+    assert.ok(await dialog.isHidden())
+    await page.mouse.up()
+  })
+  const touch = await page.context().newCDPSession(page)
+  await complete(async () => {
+    const box = await lever.boundingBox()
+    const tx = box.x + box.width / 2
+    const ty = box.y + box.height / 2
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: tx, y: ty }] })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: tx, y: ty + 20 }] })
+    assert.ok(await dialog.isHidden())
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+  })
+  const afterTouch = await count()
+  await lever.dispatchEvent('click', { detail: 1 })
+  assert.ok(await dialog.isHidden())
+  assert.equal(await count(), afterTouch)
+  await complete(async () => { await lever.focus(); await page.keyboard.press('Enter') })
+  await complete(async () => { await lever.focus(); await page.keyboard.press('Space') })
+  await complete(() => lever.tap())
+  for (const gesture of ['short', 'horizontal', 'cancel', 'escape', 'disabled']) {
+    const before = await count()
+    const box = await lever.boundingBox()
+    const tx = box.x + box.width / 2
+    const ty = box.y + box.height / 2
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: tx, y: ty }] })
+    const dx = gesture === 'horizontal' ? 25 : 0
+    const dy = gesture === 'short' ? 8 : gesture === 'horizontal' ? 15 : 20
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: tx + dx, y: ty + dy }] })
+    if (gesture === 'escape') await page.keyboard.press('Escape')
+    if (gesture === 'disabled') await lever.evaluate((node) => { node.disabled = true })
+    await touch.send('Input.dispatchTouchEvent', { type: gesture === 'cancel' ? 'touchCancel' : 'touchEnd', touchPoints: [] })
+    if (gesture === 'disabled') await lever.evaluate((node) => { node.disabled = false })
+    await lever.dispatchEvent('click', { detail: 1 })
+    assert.ok(await dialog.isHidden(), `touch ${gesture}`)
+    assert.equal(await count(), before, `touch ${gesture}`)
+  }
+  await complete(() => lever.tap())
+  for (const gesture of ['short', 'horizontal', 'cancel', 'escape', 'lost', 'disabled']) {
+    const before = await count()
+    await page.mouse.move(x, y); await page.mouse.down()
+    if (gesture === 'short') await page.mouse.move(x, y + 8)
+    if (gesture === 'horizontal') await page.mouse.move(x + 25, y + 15)
+    if (gesture === 'cancel') await lever.dispatchEvent('pointercancel', { pointerId: 1, isPrimary: true })
+    if (gesture === 'escape') await page.keyboard.press('Escape')
+    if (gesture === 'lost') { await page.mouse.move(x, y + 2); await lever.evaluate((node) => node.releasePointerCapture(1)); await page.mouse.move(x, y + 3) }
+    if (gesture === 'disabled') await lever.evaluate((node) => { node.disabled = true })
+    await page.mouse.up()
+    if (gesture === 'disabled') await lever.evaluate((node) => { node.disabled = false })
+    assert.ok(await dialog.isHidden(), gesture)
+    assert.equal(await count(), before, gesture)
+  }
+  await complete(() => lever.click())
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await lever.click()
+  const winner = await page.locator('#draw-station').textContent()
+  const before = await count()
+  assert.ok(await page.locator('#redraw').isDisabled())
+  await page.locator('#redraw').evaluate((node) => node.click())
+  assert.equal(await count(), before)
+  assert.equal(await page.locator('#draw-station').textContent(), winner)
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(2200)
+  assert.ok(await dialog.isHidden())
+  assert.equal(await page.locator('.draw-preview-row').count(), 0)
+  assert.ok(await page.locator('#result').isHidden())
+  await lever.click()
+  assert.equal(await page.locator('.draw-preview-row').count(), 18)
+  await page.locator('#skip-draw').click()
+  assert.equal(await page.locator(':focus').getAttribute('id'), 'open-draw-result')
+  await page.close()
+}
+
+async function checkLeverGeometry(browser, viewport) {
+  const page = await browser.newPage({ viewport, reducedMotion: 'no-preference' })
+  await page.goto(home)
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent)
+  await page.evaluate(() => document.fonts.ready)
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent && !document.querySelector('#draw').disabled)
+  const dir = `/tmp/subway-lever-motion-${viewport.width}x${viewport.height}`
+  fs.mkdirSync(dir, { recursive: true })
+  const geometry = (selector) => page.locator(selector).evaluate((button) => {
+    const scene = button.querySelector('.lever-scene')
+    const mount = scene.querySelector('.lever-mount')
+    const arm = scene.querySelector('.lever-arm')
+    const grip = scene.querySelector('.lever-grip')
+    const rect = (node) => node.getBoundingClientRect().toJSON()
+    const style = getComputedStyle(scene)
+    const matrix = new DOMMatrix(getComputedStyle(arm).transform)
+    const scale = parseFloat(style.width) / 28
+    const point = matrix.transformPoint(new DOMPoint(0, 0, 0))
+    return { pivotProjection: { x: rect(scene).left + 14 * scale + point.x, y: rect(scene).top + 80 * scale + point.y }, button: rect(button), scene: rect(scene), mount: rect(mount), arm: rect(arm), grip: rect(grip), q: Number(style.getPropertyValue('--lever-pull')), perspective: parseFloat(style.perspective), origin: style.perspectiveOrigin, transformOrigin: getComputedStyle(arm).transformOrigin, mountTransform: getComputedStyle(mount).transform, m23: matrix.m23, m32: matrix.m32, scale }
+  })
+  const snapshot = async (id, name) => {
+    const box = await page.locator(`#${id}`).boundingBox()
+    const x = Math.max(0, box.x - 24), y = Math.max(0, box.y - 24)
+    await page.screenshot({ path: `${dir}/${id}-${name}-close.png`, clip: { x, y, width: Math.min(viewport.width - x, box.width + 48), height: Math.min(viewport.height - y, box.height + 48) } })
+    await page.screenshot({ path: `${dir}/${id}-${name}.png` })
+  }
+  const data = {}
+  for (const id of ['draw', 'redraw']) {
+    const lever = page.locator(`#${id}`)
+    await lever.scrollIntoViewIfNeeded()
+    if (id === 'redraw') await page.locator('#draw-reveal').evaluate((dialog) => { dialog.scrollTop = 0 })
+    const box = await lever.boundingBox(), x = box.x + box.width / 2, y = box.y + 24
+    const samples = []
+    samples.push(await geometry(`#${id}`)); await snapshot(id, 'idle')
+    await page.mouse.move(x, y); await page.mouse.down()
+    await page.mouse.move(x, y + 10); samples.push(await geometry(`#${id}`)); await snapshot(id, 'mid-pull')
+    await page.mouse.move(x, y + 20); samples.push(await geometry(`#${id}`)); await snapshot(id, 'full-pull')
+    for (const sample of samples) {
+      for (const part of ['button', 'scene', 'mount']) for (const edge of ['left', 'right', 'top', 'bottom']) assert.ok(Math.abs(sample[part][edge] - samples[0][part][edge]) <= .5, `${id} ${part} ${edge}`)
+      const px = sample.mount.left + 10 * sample.scale, py = sample.mount.top + 9 * sample.scale
+      assert.ok(Math.abs((sample.arm.left + sample.arm.right) / 2 - px) < .5 && Math.abs(sample.arm.bottom - py) < .5, `${id} pivot`)
+      assert.ok(Math.abs(sample.pivotProjection.x - px) < .5 && Math.abs(sample.pivotProjection.y - py) < .5, `${id} matrix pivot`)
+      const origin = sample.origin.split(' ').map(parseFloat)
+      assert.ok(Math.abs(origin[0] - 14 * sample.scale) < .1 && Math.abs(origin[1] - 80 * sample.scale) < .1)
+      const armOrigin = sample.transformOrigin.split(' ').map(parseFloat)
+      assert.ok(Math.abs(armOrigin[0] - 3 * sample.scale) < .1 && Math.abs(armOrigin[1] - 64 * sample.scale) < .1)
+      assert.ok(Math.abs(sample.perspective - 240 * sample.scale) < .1 && sample.mountTransform === 'none')
+      assert.ok(Math.abs(sample.m23) > .1 && Math.abs(sample.m32) > .1)
+    }
+    assert.ok(samples[2].grip.width / samples[0].grip.width >= 1.2, `${id} ${JSON.stringify(samples)}`)
+    assert.ok(samples[2].arm.height < samples[0].arm.height * .55)
+    assert.ok(Math.abs(samples[2].m23) > Math.abs(samples[0].m23))
+    for (const [i, expectedY] of [13.67, 22.11, 45.58].entries()) {
+      const sample = samples[i]
+      assert.ok(Math.abs((sample.grip.top + sample.grip.bottom) / 2 - sample.scene.top - expectedY * sample.scale) < 1)
+    }
+    await page.evaluate((target) => {
+      window.leverFrames = []
+      const scene = document.querySelector(target + ' .lever-scene')
+      const start = performance.now()
+      window.leverDone = new Promise((resolve) => {
+        function frame(now) {
+          const arm = scene.querySelector('.lever-arm'), grip = scene.querySelector('.lever-grip')
+          window.leverFrames.push({ t: now - start, q: Number(getComputedStyle(scene).getPropertyValue('--lever-pull')), button: scene.parentElement.getBoundingClientRect().toJSON(), scene: scene.getBoundingClientRect().toJSON(), mount: scene.querySelector('.lever-mount').getBoundingClientRect().toJSON(), arm: arm.getBoundingClientRect().toJSON(), grip: grip.getBoundingClientRect().toJSON() })
+          if (now - start < 350) requestAnimationFrame(frame); else resolve()
+        }
+        requestAnimationFrame(frame)
+      })
+    }, `#${id}`)
+    const cdp = await page.context().newCDPSession(page)
+    const captures = []
+    cdp.on('Page.screencastFrame', ({ data, metadata, sessionId }) => {
+      captures.push({ data, time: metadata.timestamp * 1000 })
+      cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {})
+    })
+    await cdp.send('Page.startScreencast', { format: 'png', everyNthFrame: 1 })
+    const releaseTime = Date.now()
+    if (id === 'draw') await lever.dispatchEvent('pointercancel', { pointerId: 1, isPrimary: true })
+    await page.mouse.up()
+    const frames = await page.evaluate(async () => { await window.leverDone; return window.leverFrames })
+    await cdp.send('Page.stopScreencast')
+    await cdp.detach()
+    const returning = captures.filter((frame) => frame.time > releaseTime && frame.time < releaseTime + 150)
+      .sort((a, b) => Math.abs(a.time - releaseTime - 50) - Math.abs(b.time - releaseTime - 50))[0]
+    assert.ok(returning, `${id} return screenshot`)
+    fs.writeFileSync(`${dir}/${id}-return.png`, Buffer.from(returning.data, 'base64'))
+    const returnBox = await lever.boundingBox()
+    const crop = await page.evaluate(async ({ data, x, y, width, height }) => {
+      const image = new Image()
+      image.src = 'data:image/png;base64,' + data
+      await image.decode()
+      const canvas = document.createElement('canvas')
+      canvas.width = width; canvas.height = height
+      canvas.getContext('2d').drawImage(image, x, y, width, height, 0, 0, width, height)
+      return canvas.toDataURL('image/png').split(',')[1]
+    }, { data: returning.data, x: Math.max(0, returnBox.x - 24), y: Math.max(0, returnBox.y - 24), width: Math.min(viewport.width - Math.max(0, returnBox.x - 24), returnBox.width + 48), height: Math.min(viewport.height - Math.max(0, returnBox.y - 24), returnBox.height + 48) })
+    fs.writeFileSync(`${dir}/${id}-return-close.png`, Buffer.from(crop, 'base64'))
+    await snapshot(id, 'settled')
+    assert.ok(frames.some((frame) => frame.q > .1 && frame.q < .95), `${id} natural return`)
+    assert.ok(frames.at(-1).q < .01, `${id} settled`)
+    for (const frame of frames) {
+      for (const part of ['button', 'scene', 'mount']) for (const edge of ['left', 'right', 'top', 'bottom']) assert.ok(Math.abs(frame[part][edge] - frames[0][part][edge]) < .5, `${id} return ${part} ${edge}`)
+      assert.ok(Math.abs(frame.arm.bottom - (frame.mount.top + 9 * samples[0].scale)) < .5 && Math.abs((frame.arm.left + frame.arm.right) / 2 - (frame.mount.left + 10 * samples[0].scale)) < .5, `${id} return pivot`)
+    }
+    if (id === 'redraw') {
+      assert.ok(await lever.isDisabled())
+      assert.ok(Math.max(...frames.map((frame) => frame.grip.width)) / frames.at(-1).grip.width >= 1.18, 'disabled lever keeps perspective')
+    }
+    data[id] = { samples, frames }
+    if (id === 'draw') {
+      await lever.click()
+      await page.locator('#skip-draw').click()
+      await page.waitForFunction(() => !document.querySelector('#redraw').disabled)
+    }
+  }
+  fs.writeFileSync(`${dir}/geometry.json`, JSON.stringify(data, null, 2))
+  await page.close()
+}
+
+async function checkLeverFeedback(browser) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, reducedMotion: 'no-preference' })
+  await page.goto(home)
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent)
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent)
+  for (const input of ['click', 'tap', 'Enter', 'Space']) {
+    const lever = page.locator('#draw')
+    await lever.scrollIntoViewIfNeeded()
+    if (input === 'Enter' || input === 'Space') await lever.focus()
+    await page.evaluate(() => {
+      window.feedbackFrames = []
+      document.querySelector('#draw').addEventListener('click', () => {
+        const scene = document.querySelector('#redraw .lever-scene'), start = performance.now()
+        window.feedbackDone = new Promise((resolve) => {
+          function frame(now) {
+            window.feedbackFrames.push({ t: now - start, q: Number(getComputedStyle(scene).getPropertyValue('--lever-pull')), width: scene.querySelector('.lever-grip').getBoundingClientRect().width })
+            if (now - start < 350) requestAnimationFrame(frame); else resolve()
+          }
+          requestAnimationFrame(frame)
+        })
+      }, { capture: true, once: true })
+    })
+    if (input === 'click') await lever.click()
+    else if (input === 'tap') await lever.tap()
+    else await page.keyboard.press(input)
+    assert.ok(await page.locator('#draw-reveal').isVisible())
+    assert.ok(await page.locator('#skip-draw').isVisible())
+    const frames = await page.evaluate(async () => { await window.feedbackDone; return window.feedbackFrames })
+    const peak = frames.reduce((a, b) => a.q > b.q ? a : b)
+    assert.ok(peak.q > .9 && frames.some((frame) => frame.t > peak.t && frame.q > .05 && frame.q < .9), `${input} stroke and return`)
+    assert.ok(frames.at(-1).q < .01 && peak.width / frames.at(-1).width >= 1.2, `${input} settled`)
+    await page.locator('#skip-draw').click()
+    const redraw = page.locator('#redraw')
+    await redraw.scrollIntoViewIfNeeded()
+    if (input === 'Enter' || input === 'Space') await redraw.focus()
+    await page.evaluate(() => {
+      window.redrawFrames = []
+      document.querySelector('#redraw').addEventListener('click', () => {
+        const scene = document.querySelector('#redraw .lever-scene'), start = performance.now()
+        window.redrawDone = new Promise((resolve) => {
+          function frame(now) {
+            window.redrawFrames.push({ t: now - start, q: Number(getComputedStyle(scene).getPropertyValue('--lever-pull')) })
+            if (now - start < 350) requestAnimationFrame(frame); else resolve()
+          }
+          requestAnimationFrame(frame)
+        })
+      }, { capture: true, once: true })
+    })
+    if (input === 'click') await redraw.click()
+    else if (input === 'tap') await redraw.tap()
+    else await page.keyboard.press(input)
+    const redrawFrames = await page.evaluate(async () => { await window.redrawDone; return window.redrawFrames })
+    const redrawPeak = redrawFrames.reduce((a, b) => a.q > b.q ? a : b)
+    assert.ok(redrawPeak.q > .9 && redrawFrames.some((frame) => frame.t > redrawPeak.t && frame.q > .05 && frame.q < .9), `${input} redraw stroke and return`)
+    assert.ok(redrawFrames.at(-1).q < .01)
+    fs.writeFileSync(`/tmp/subway-lever-motion-390x844/${input}-feedback.json`, JSON.stringify({ home: frames, redraw: redrawFrames }, null, 2))
+    await page.keyboard.press('Escape')
+    await page.waitForFunction(() => !document.querySelector('#draw').disabled)
+  }
+  const lever = page.locator('#draw')
+  const box = await lever.boundingBox(), x = box.x + box.width / 2, y = box.y + 24
+  await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x, y + 20)
+  await page.evaluate(() => {
+    window.handoff = new Promise((resolve) => {
+      document.querySelector('#draw').addEventListener('pointerup', () => {
+        requestAnimationFrame(() => resolve(Number(getComputedStyle(document.querySelector('#redraw .lever-scene')).getPropertyValue('--lever-pull'))))
+      }, { once: true })
+    })
+  })
+  await page.mouse.up()
+  assert.ok(await page.evaluate(() => window.handoff) > .5, 'home pull continues in the visible dialog')
+  assert.ok(await page.locator('#draw-reveal').isVisible())
+  await page.keyboard.press('Escape')
+  await page.waitForFunction(() => !document.querySelector('#draw').disabled)
+  await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x, y + 20)
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  assert.equal(await lever.locator('.lever-scene').evaluate((node) => Number(getComputedStyle(node).getPropertyValue('--lever-pull'))), 0)
+  await page.mouse.up()
+  assert.ok(await page.locator('#draw-reveal').isVisible())
+  assert.ok(await page.locator('#open-draw-result').isEnabled())
+  assert.equal(await page.locator('#redraw .lever-scene').evaluate((node) => node.getAnimations().length), 0)
+  await page.keyboard.press('Escape')
+  await page.waitForFunction(() => !document.querySelector('#draw').disabled)
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await lever.click()
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.waitForFunction(() => document.querySelector('#draw-reveal').classList.contains('landed'))
+  assert.equal(await page.locator('#redraw .lever-scene').evaluate((node) => node.getAnimations().length), 0)
+  await page.keyboard.press('Escape')
+  await page.waitForFunction(() => !document.querySelector('#draw').disabled)
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await lever.click()
+  await page.keyboard.press('Escape')
+  await page.waitForFunction(() => !document.querySelector('#draw').disabled)
+  await lever.click()
+  assert.ok(await page.locator('#draw-reveal').isVisible())
+  await page.close()
+
+  const unsupported = await browser.newPage({ reducedMotion: 'no-preference' })
+  await unsupported.addInitScript(() => { CSS.registerProperty = undefined })
+  await unsupported.goto(home)
+  await unsupported.waitForFunction(() => document.querySelector('#draw-pool').textContent)
+  await unsupported.locator('#draw').click()
+  assert.ok(await unsupported.locator('#draw-reveal').isVisible())
+  assert.equal(await unsupported.locator('#redraw .lever-scene').evaluate((node) => node.getAnimations().length), 0)
+  await unsupported.close()
+  const noWaapi = await browser.newPage({ reducedMotion: 'no-preference' })
+  await noWaapi.addInitScript(() => { Element.prototype.animate = undefined })
+  await noWaapi.goto(home)
+  await noWaapi.waitForFunction(() => document.querySelector('#draw-pool').textContent)
+  await noWaapi.locator('#draw').click()
+  assert.ok(await noWaapi.locator('#open-draw-result').isEnabled())
+  assert.equal(await noWaapi.locator('#redraw .lever-scene').evaluate((node) => node.getAnimations().length), 0)
+  await noWaapi.close()
+}
+
 async function main() {
-  const browser = await chromium.launch({ channel: 'chrome', args: ['--host-resolver-rules=MAP tile.openstreetmap.org ~NOTFOUND'] })
+  const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_USE_BUNDLED_CHROMIUM === '1' ? undefined : 'chrome', args: ['--host-resolver-rules=MAP tile.openstreetmap.org ~NOTFOUND'] })
   try {
+    for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }, { width: 280, height: 240 }]) await recordMotion(browser, viewport)
+    for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }, { width: 280, height: 240 }]) await checkLeverGeometry(browser, viewport)
+    await checkLeverFeedback(browser)
+    await checkLever(browser)
+    await checkOutsideTouchScroll(browser)
+    await checkTwoCandidateMotion(browser)
+    await checkMultiTouchLevers(browser)
+    await checkLongWinnerShort(browser)
     const page = await browser.newPage({
       viewport: { width: 390, height: 844 },
       permissions: ['clipboard-read', 'clipboard-write'],
@@ -45,6 +631,23 @@ async function main() {
     page.on('pageerror', (error) => errors.push(error.message))
     await page.addInitScript(() => { Math.random = () => 0 })
     await page.goto(home)
+  await page.waitForFunction(() => document.querySelector('#draw-pool').textContent)
+
+    const mobileCopy = await page.locator('main > .slot-screen .slot-copy').boundingBox()
+    const mobileMachine = await page.locator('main > .slot-screen .slot-machine').boundingBox()
+    const mobileScope = await page.locator('#scope-title').boundingBox()
+    assert.ok(mobileCopy.y + mobileCopy.height <= mobileMachine.y)
+    assert.ok(mobileMachine.y + mobileMachine.height <= mobileScope.y)
+    assert.equal(Math.round(mobileMachine.width), 336)
+    await page.setViewportSize({ width: 1440, height: 1000 })
+    const desktopCopy = await page.locator('main > .slot-screen .slot-copy').boundingBox()
+    const desktopStage = await page.locator('main > .slot-screen .slot-stage').boundingBox()
+    const desktopMachine = await page.locator('main > .slot-screen .slot-machine').boundingBox()
+    assert.equal(Math.round(desktopCopy.width), 480)
+    assert.equal(Math.round(desktopStage.width), 656)
+    assert.equal(Math.round(desktopMachine.width), 420)
+    assert.ok(desktopCopy.x + desktopCopy.width < desktopStage.x)
+    await page.setViewportSize({ width: 390, height: 844 })
 
     assert.ok(await page.locator('#line-options').isHidden())
     await openDrawSettings(page)
@@ -55,22 +658,33 @@ async function main() {
     await openDrawSettings(page)
     await page.locator('#hide-all').click()
     assert.ok(await page.locator('#draw').isDisabled())
+    assert.equal(await page.locator('#scope-count').innerText(), '후보 역 0곳')
+    assert.equal(await page.locator('#machine-count').textContent(), '0 STATIONS')
     await openDrawSettings(page)
     await page.locator('#show-all').click()
     const allStations = await page.locator('.station:visible').count()
     assert.equal(allStations, expectedCoverage.stations)
+    assert.equal(await page.locator('#scope-count').innerText(), `후보 역 ${allStations}곳`)
+    assert.equal(await page.locator('#machine-count').textContent(), `${allStations} STATIONS`)
+    assert.equal(await page.locator('#scope-summary').innerText(), '전체 노선')
+    assert.equal(await page.locator('#scope-tags li').count(), 5)
+    for (const asset of ['pixel-subway.svg', 'pixel-train.svg', 'pixel-heart.svg', 'pixel-lever.svg', 'fonts/Pretendard-Regular.subset.woff2', 'fonts/Pretendard-Bold.subset.woff2', 'fonts/PressStart2P-Regular.woff2']) {
+      assert.ok((await page.request.get(new URL(`/assets/${asset}`, page.url()).href)).ok(), asset)
+    }
+    assert.equal(await page.evaluate(() => document.fonts.ready.then(() => document.fonts.status)), 'loaded')
     const lineCounts = await page.locator('#lines .line-coverage').evaluateAll((nodes) =>
       Object.fromEntries(nodes.map((node) => [node.id.slice('line-coverage-'.length), node.textContent])))
     assert.deepEqual(lineCounts, Object.fromEntries(Object.entries(expectedCoverage.byLine).map(([id, coverage]) =>
       [id, `${coverage.complete}/${coverage.total}`])))
     const allPool = await page.locator('#draw-pool').innerText()
-    assert.equal(await page.locator('#draw').getAttribute('aria-describedby'), 'draw-pool')
+    assert.equal(await page.locator('#draw').getAttribute('aria-describedby'), 'draw-pool draw-hint')
     assert.equal(Number(allPool.match(/^\d+/)[0]), allStations)
     assert.match(allPool, /환승역은 한 번만 포함/)
     await openDrawSettings(page)
     await page.getByLabel('놀거리·먹거리·카페 기본 후보가 있는 역만').check()
     const filteredStations = Number((await page.locator('#draw-pool').innerText()).match(/^\d+/)[0])
     assert.equal(filteredStations, expectedCoverage.complete)
+    assert.equal(await page.locator('#scope-count').innerText(), `후보 역 ${filteredStations}곳`)
     const excludedMarkers = page.locator('#map .station[aria-description="뽑기 후보 아님 (장소 후보 조건)"]')
     assert.equal(await excludedMarkers.count(), allStations - filteredStations)
     await openDrawSettings(page)
@@ -93,26 +707,19 @@ async function main() {
     assert.equal(await dialog.locator('#draw-announcement').textContent(), '역을 뽑는 중이에요.')
     assert.equal(await dialog.locator('#draw-station').getAttribute('aria-hidden'), 'true')
     const progressTrack = dialog.locator('.ticket-track')
-    assert.equal(await progressTrack.evaluate((track) => getComputedStyle(track, '::before').animationName), 'track-progress')
-    const firstFrame = await page.locator('#draw-station').innerText()
+    assert.ok(await dialog.locator('#draw-reel').evaluate((reel) => reel.getAnimations().length > 0))
     const skipButton = dialog.getByRole('button', { name: '결과 바로 보기' })
     const firstSkipPosition = await skipButton.boundingBox()
     const spinningColor = await dialog.evaluate((ticket) => getComputedStyle(ticket).getPropertyValue('--draw-color'))
-    await page.waitForFunction((name) => document.querySelector('#draw-station').textContent !== name, firstFrame)
-    const secondFrame = await page.locator('#draw-station').innerText()
+    await checkReelSeek(page)
     assert.deepEqual(await skipButton.boundingBox(), firstSkipPosition)
     assert.equal(await dialog.evaluate((ticket) => getComputedStyle(ticket).getPropertyValue('--draw-color')), spinningColor)
-    await page.waitForFunction((names) => {
-      const station = document.querySelector('#draw-station')
-      return station.getAttribute('aria-hidden') === 'true' && !names.includes(station.textContent)
-    }, [firstFrame, secondFrame])
-    await dialog.getByRole('heading', { name: '오늘 내릴 역' }).waitFor()
+    await dialog.getByRole('heading', { name: /^오늘 내릴 역은/ }).waitFor()
     assert.equal(await dialog.locator('#draw-station').getAttribute('aria-hidden'), null)
     assert.match(await dialog.evaluate((ticket) => ticket.style.getPropertyValue('--draw-color')), /^#/)
     assert.ok(await dialog.locator('#draw-line').evaluate((line) => {
       const marker = getComputedStyle(line.querySelector('.draw-transfer-line') ?? line, '::before')
-      const train = getComputedStyle(document.querySelector('.ticket-train'))
-      return marker.content === '""' && marker.backgroundColor === train.backgroundColor
+      return marker.content === '""' && marker.backgroundColor !== 'rgba(0, 0, 0, 0)'
     }))
     const trainAtStop = await dialog.locator('.ticket-track').evaluate((track) => {
       const train = track.querySelector('.ticket-train')
@@ -120,19 +727,18 @@ async function main() {
       return Math.abs(train.getBoundingClientRect().right - stop.getBoundingClientRect().right) < 1
     })
     assert.ok(trainAtStop)
-    assert.equal(await progressTrack.locator('.ticket-stop').evaluate((stop) =>
-      getComputedStyle(stop).backgroundColor === getComputedStyle(stop).borderTopColor), true)
-    assert.equal(await progressTrack.evaluate((track) => getComputedStyle(track, '::before').transform), 'matrix(1, 0, 0, 1, 0, 0)')
+    assert.equal(await progressTrack.locator('.ticket-stop').evaluate((stop) => getComputedStyle(stop).backgroundColor), 'rgb(241, 132, 86)')
     assert.equal(await progressTrack.locator('.ticket-arrival').evaluate((ring) =>
       getComputedStyle(ring).animationName), 'arrival-ring')
     assert.match(await dialog.locator('#draw-coverage').innerText(), /^놀거리 [1-9]\d*곳 · 먹거리 [1-9]\d*곳 · 카페 [1-9]\d*곳$/)
     const stationMap = dialog.getByRole('link', { name: '역 위치 네이버 지도에서 보기' })
     assert.ok(await stationMap.isVisible())
     const drawnName = await dialog.locator('#draw-station').innerText()
+    assert.equal(await dialog.locator('#draw-station').evaluate((node) => node.style.getPropertyValue('--chars')), String([...drawnName].length))
     assert.ok(decodeURI(await stationMap.getAttribute('href')).includes(drawnName))
     assert.ok(await dialog.locator('#draw-saved-course').isHidden())
-    assert.equal(await dialog.getByRole('button', { name: '코스 보기' }).getAttribute('aria-describedby'), 'draw-station draw-line draw-coverage')
-    await dialog.getByRole('button', { name: '코스 보기' }).press('Enter')
+    assert.equal(await dialog.getByRole('button', { name: '확인하기' }).getAttribute('aria-describedby'), 'draw-station draw-line draw-coverage draw-confirm-hint')
+    await dialog.getByRole('button', { name: '확인하기' }).press('Enter')
     await page.locator('#result').waitFor()
     assert.equal(await page.locator('#station-name').innerText(), drawnName)
     assert.equal(await page.locator(':focus').getAttribute('id'), 'station-name')
@@ -146,12 +752,12 @@ async function main() {
     await page.locator('#draw').click()
     await dialog.getByRole('button', { name: '결과 바로 보기' }).click()
     assert.ok(await dialog.locator('#draw-saved-course').isVisible())
-    assert.equal(await dialog.locator('#open-draw-result').getAttribute('aria-describedby'), 'draw-station draw-line draw-coverage draw-saved-course')
+    assert.equal(await dialog.locator('#open-draw-result').getAttribute('aria-describedby'), 'draw-station draw-line draw-coverage draw-saved-course draw-confirm-hint')
     assert.match(await dialog.locator('#draw-coverage').innerText(), /^기본 후보 · /)
     assert.match(await dialog.locator('#draw-saved-course').innerText(), /후보 거리 직선 800m 이내/)
     assert.match(await dialog.locator('#draw-saved-course .draw-saved-preview').innerText(), /^저장한 장소 3곳 · .+ → .+ → .+/)
     assert.equal(await dialog.locator('.draw-saved-preview').innerText(), `저장한 장소 3곳 · ${savedNames.join(' → ')}`)
-    await dialog.getByRole('button', { name: '저장한 코스 보기', exact: true }).click()
+    await dialog.getByRole('button', { name: '확인하기', exact: true }).click()
     assert.equal(await page.getByLabel('후보 거리').inputValue(), '800')
     assert.equal(await page.getByLabel('방문 순서').inputValue(), 'cafe,food,activity')
 
@@ -613,21 +1219,22 @@ async function main() {
     const firstPreview = await drawPage.locator('#draw-station').innerText()
     assert.ok(await drawPage.locator('#draw-map-search').isHidden())
     assert.equal(await drawPage.locator('#draw-map-search a').count(), 0)
-    await drawPage.waitForFunction((name) => {
-      const dialog = document.querySelector('#draw-reveal')
-      return !dialog.classList.contains('landed') && document.querySelector('#draw-station').textContent !== name
-    }, firstPreview)
+    assert.equal(await drawPage.locator('#draw-reel .draw-preview-row').count(), 18)
+    const twoPreviews = await drawPage.locator('#draw-reel .draw-preview-row').allTextContents()
+    assert.equal(new Set(twoPreviews).size, 2)
+    assert.ok(twoPreviews.slice(1).every((name, index) => name !== twoPreviews[index]))
+    await checkReelSeek(drawPage)
     assert.equal(await drawPage.locator(':focus').getAttribute('id'), 'dismiss-draw')
     await drawPage.keyboard.press('Tab')
     assert.equal(await drawPage.locator(':focus').getAttribute('id'), 'skip-draw')
     await drawPage.keyboard.press('Enter')
-    await drawPage.getByRole('heading', { name: '오늘 내릴 역' }).waitFor()
+    await drawPage.getByRole('heading', { name: /^오늘 내릴 역은/ }).waitFor()
     assert.equal(await drawPage.locator(':focus').getAttribute('id'), 'open-draw-result')
     const confirmedWinner = await drawPage.locator('#draw-station').innerText()
     assert.equal(confirmedWinner, firstPreview)
     assert.equal(await drawPage.locator('#draw-station').evaluate((label) => getComputedStyle(label).animationName), 'station-arrival')
     assert.equal(await drawPage.locator('#draw-line').evaluate((label) => getComputedStyle(label).animationName), 'station-arrival')
-    assert.equal(await drawPage.locator('.ticket-display').evaluate((display) => getComputedStyle(display).animationName), 'none')
+    assert.equal(await drawPage.locator('#draw-reveal .ticket-display').evaluate((display) => getComputedStyle(display).animationName), 'none')
     const fits = await drawPage.locator('.ticket-actions').evaluate((actions) => actions.scrollWidth === actions.clientWidth)
     assert.ok(fits)
     for (const id of ['dismiss-draw', 'open-draw-result', 'redraw']) {
@@ -636,20 +1243,21 @@ async function main() {
     }
     assert.match(await drawPage.locator('#draw-remaining').innerText(), /1곳/)
     assert.match(await drawPage.locator('#draw-remaining').innerText(), /다음 뽑기에서 역마다 1\/1$/)
-    assert.ok(await drawPage.getByRole('button', { name: '남은 역 뽑기' }).isVisible())
-    assert.equal(await drawPage.locator('#redraw').getAttribute('aria-describedby'), 'draw-remaining')
+    assert.ok(await drawPage.getByRole('button', { name: '손잡이 당겨 남은 역 뽑기' }).isVisible())
+    assert.equal(await drawPage.locator('#redraw').getAttribute('aria-describedby'), 'draw-remaining redraw-hint')
     await drawPage.setViewportSize({ width: 280, height: 240 })
-    const openCourse = drawPage.getByRole('button', { name: '코스 보기' })
+    const openCourse = drawPage.locator('#open-draw-result')
     const dialogBounds = await drawPage.locator('#draw-reveal').boundingBox()
     const courseBounds = await openCourse.boundingBox()
     const redrawBounds = await drawPage.locator('#redraw').boundingBox()
-    assert.ok(courseBounds.y < redrawBounds.y)
-    assert.equal(redrawBounds.width, courseBounds.width)
-    assert.equal(redrawBounds.x, courseBounds.x)
     assert.ok(courseBounds.y + courseBounds.height <= dialogBounds.y + dialogBounds.height)
+    assert.ok(redrawBounds.width >= 44 && redrawBounds.height >= 44)
+    assert.ok(redrawBounds.x >= dialogBounds.x && redrawBounds.x + redrawBounds.width <= dialogBounds.x + dialogBounds.width)
     await drawPage.locator('#draw-reveal').evaluate((dialog) => { dialog.scrollTop = dialog.scrollHeight })
     assert.ok(await drawPage.locator('#draw-reveal').evaluate((dialog) => dialog.scrollTop > 0))
     await drawPage.locator('#dismiss-draw').focus()
+    await drawPage.keyboard.press('Tab')
+    assert.equal(await drawPage.locator(':focus').getAttribute('id'), 'redraw')
     await drawPage.keyboard.press('Tab')
     const resultMapLink = drawPage.locator('#draw-map-search a').first()
     assert.ok(await resultMapLink.evaluate((link) => {
@@ -658,18 +1266,17 @@ async function main() {
       return link === document.activeElement && bounds.height >= 44 && bounds.bottom <= actions.top
     }))
     const penultimateWinner = await drawPage.locator('#draw-station').innerText()
-    await openCourse.focus()
-    await drawPage.keyboard.press('Tab')
+    await drawPage.locator('#redraw').focus()
     assert.equal(await drawPage.locator(':focus').getAttribute('id'), 'redraw')
     await drawPage.keyboard.press('Enter')
     assert.equal(await drawPage.locator(':focus').getAttribute('id'), 'dismiss-draw')
     assert.equal(await drawPage.locator('#draw-reveal').evaluate((dialog) => dialog.scrollTop), 0)
-    await drawPage.getByRole('heading', { name: '오늘 내릴 역' }).waitFor()
+    await drawPage.getByRole('heading', { name: /^오늘 내릴 역은/ }).waitFor()
     assert.ok(await drawPage.locator('#skip-draw').isHidden())
     assert.notEqual(await drawPage.locator('#draw-station').innerText(), penultimateWinner)
     assert.match(await drawPage.locator('#draw-remaining').innerText(), /모든 후보 역을 한 번씩/)
     assert.match(await drawPage.locator('#draw-remaining').innerText(), new RegExp(`직전에 나온 역을 제외한 ${count - 1}곳`))
-    assert.ok(await drawPage.getByRole('button', { name: '새로 한 바퀴 뽑기' }).isVisible())
+    assert.ok(await drawPage.getByRole('button', { name: '손잡이 당겨 새로 한 바퀴 뽑기' }).isVisible())
     assert.match(await drawPage.locator('#draw-announcement').textContent(), /모든 후보 역을 한 번씩/)
     const lastWinner = await drawPage.locator('#draw-station').innerText()
     const recentDraw = drawPage.locator('#recent-draws button').first()
@@ -677,7 +1284,7 @@ async function main() {
     const recentBounds = await recentDraw.boundingBox()
     assert.ok(recentBounds && recentBounds.height >= 44 && recentBounds.width >= 44)
     await recentDraw.tap()
-    await drawPage.getByRole('heading', { name: '이전에 뽑은 역' }).waitFor()
+    await drawPage.getByRole('heading', { name: /^이전에 뽑은 역은/ }).waitFor()
     assert.match(await drawPage.locator('#draw-announcement').textContent(), /이전에 뽑은 역은/)
     assert.notEqual(await drawPage.locator('#draw-station').innerText(), lastWinner)
     const historyName = await drawPage.locator('#draw-station').innerText()
@@ -702,31 +1309,32 @@ async function main() {
     await drawPage.keyboard.press('Escape')
     await drawPage.waitForFunction(() => document.activeElement.id === 'draw')
     assert.ok(await drawPage.locator('#draw-reveal').isHidden())
-    assert.equal(await drawPage.locator('#draw-station').evaluate((label) => label.getAnimations().length), 0)
+    assert.equal(await drawPage.locator('#draw-reel').evaluate((label) => label.getAnimations().length), 0)
     await drawPage.locator('#draw').click()
     const skip = drawPage.getByRole('button', { name: '결과 바로 보기' })
     await skip.focus()
     await drawPage.emulateMedia({ reducedMotion: 'reduce' })
-    await openCourse.waitFor({ timeout: 1000 })
+    await drawPage.waitForFunction(() => document.querySelector('#draw-reveal').classList.contains('landed'), null, { timeout: 1000 })
     assert.equal(await drawPage.locator('#draw-station').evaluate((label) => getComputedStyle(label).animationName), 'none')
     assert.equal(await drawPage.locator('#draw-line').evaluate((label) => getComputedStyle(label).animationName), 'none')
-    const reducedTrack = drawPage.locator('.ticket-track')
+    const reducedTrack = drawPage.locator('#draw-reveal .ticket-track')
     assert.deepEqual(await reducedTrack.evaluate((track) => {
       const progress = getComputedStyle(track, '::before')
-      return [progress.animationName, progress.transform, track.querySelector('.ticket-train').getAnimations().length]
-    }), ['none', 'matrix(1, 0, 0, 1, 0, 0)', 0])
+      return [progress.animationName, track.querySelector('.ticket-train').getAnimations().length]
+    }), ['none', 0])
     assert.ok(await skip.isHidden())
     assert.equal(await drawPage.locator(':focus').getAttribute('id'), 'open-draw-result')
     await openCourse.click()
     await drawPage.locator('#result').waitFor()
     await drawPage.evaluate(() => {
-      const label = document.querySelector('#draw-station')
+      const label = document.querySelector('#draw-reel')
       label.animate = undefined
       label.getAnimations = undefined
     })
     await drawPage.emulateMedia({ reducedMotion: 'no-preference' })
     await drawPage.locator('#draw').click()
-    await skip.click()
+    assert.ok(await skip.isHidden())
+    assert.ok(await openCourse.isEnabled())
     await openCourse.click()
     await drawPage.locator('#draw-reveal').waitFor({ state: 'hidden' })
     assert.ok(await drawPage.locator('#result').isVisible())
@@ -784,7 +1392,7 @@ async function main() {
     const groups = await emptyResult.locator('.draw-line-group').evaluateAll((rows) =>
       rows.map((row) => row.getBoundingClientRect().top))
     assert.ok(groups[0] < groups[1])
-    await emptyResult.getByRole('button', { name: '코스 보기' }).click()
+    await emptyResult.getByRole('button', { name: '확인하기' }).click()
     await openDrawSettings(emptyDraw)
     await emptyDraw.locator('#hide-all').click()
     assert.ok(await emptyDraw.locator('#draw-from-course').isDisabled())
@@ -999,7 +1607,13 @@ async function main() {
       contentType: 'application/javascript',
       body: 'export default { "0150": { activity: [["검증 장소", "주소", "설명"]] } }',
     }))
-    await partialDraw.addInitScript(() => { Math.random = () => 0 })
+    await partialDraw.addInitScript(() => {
+      Math.random = () => 0
+      const listen = window.addEventListener.bind(window)
+      window.addEventListener = (type, handler, ...options) => listen(type, type === 'storage'
+        ? (event) => window.delayStorage ? setTimeout(() => handler(event), 350) : handler(event)
+        : handler, ...options)
+    })
     await partialDraw.goto(home)
     await partialDraw.evaluate(() => localStorage.setItem('subway-date:edited-courses', '["0150"]'))
     await partialDraw.reload()
@@ -1055,16 +1669,17 @@ async function main() {
     assert.equal(await partialDraw.locator('#save-shared-course').innerText(), '받은 코스 저장')
     assert.ok(await partialDraw.locator('#save-shared-course').evaluate((button) => button === document.activeElement))
     await partialDraw.locator('#draw').click()
-    assert.ok(await partialDraw.getByRole('button', { name: '코스 보기', exact: true }).isVisible())
+    assert.ok(await partialDraw.locator('#open-draw-result').isVisible())
     assert.ok(await partialDraw.locator('#draw-saved-course').isHidden())
     assert.equal(await partialDraw.locator('#draw-coverage').innerText(), '놀거리 1곳 · 먹거리 후보 없음 · 카페 후보 없음')
+    await partialDraw.evaluate(() => { window.delayStorage = true })
     await openCourseSettings(sharedEditor)
     await sharedEditor.getByLabel('후보 거리').selectOption('500')
-    await partialDraw.getByRole('button', { name: '저장한 코스 보기', exact: true }).waitFor()
+    await partialDraw.waitForFunction(() => !document.querySelector('#draw-saved-course').hidden && document.querySelector('#draw-saved-course').textContent.includes('500m'))
     assert.match(await partialDraw.locator('#draw-saved-course').innerText(), /500m/)
     assert.match(await partialDraw.locator('#draw-coverage').innerText(), /^기본 후보/)
     await sharedEditor.evaluate(() => localStorage.clear())
-    await partialDraw.getByRole('button', { name: '코스 보기', exact: true }).waitFor()
+    await partialDraw.waitForFunction(() => document.querySelector('#draw-saved-course').hidden && document.querySelector('#draw-coverage').textContent === '놀거리 1곳 · 먹거리 후보 없음 · 카페 후보 없음')
     assert.equal(await partialDraw.locator('#draw-coverage').innerText(), '놀거리 1곳 · 먹거리 후보 없음 · 카페 후보 없음')
     const nearbyCafe = partialDraw.getByRole('link', { name: /서울역.*주변 카페 검색 네이버 지도에서 보기/ })
     assert.match(decodeURIComponent(await nearbyCafe.getAttribute('href')), /서울역.*카페$/)
@@ -1127,7 +1742,7 @@ async function main() {
     assert.equal(await drawMaglevGuide.getAttribute('href'), await maglevGuide.getAttribute('href'))
     assert.match(await maglevResult.locator('#draw-line').innerText(), /^(선택한 노선 )?인천공항 자기부상철도/)
     assert.match(await maglevResult.locator('#draw-coverage').innerText(), /놀거리까지 대중교통 이동/)
-    await maglevResult.getByRole('button', { name: '코스 보기', exact: true }).click()
+    await maglevResult.getByRole('button', { name: '확인하기', exact: true }).click()
     await trailPage.locator('#station-name').getByText('인천공항1터미널역', { exact: true }).waitFor()
     await openCourseSettings(trailPage)
     await trailPage.getByLabel('후보 거리').selectOption('500')
@@ -1227,7 +1842,7 @@ async function main() {
     await nearbyDraw.getByRole('searchbox').press('Enter')
     assert.equal(await nearbyDraw.getByLabel('후보 거리').inputValue(), '')
     await nearbyDraw.locator('#draw').click()
-    await nearbyDraw.getByRole('button', { name: '코스 보기', exact: true }).click()
+    await nearbyDraw.locator('#open-draw-result').click()
     await nearbyDraw.locator('#station-name').getByText(nearbyWinner, { exact: true }).waitFor()
     await nearbyDraw.waitForFunction(() => document.querySelector('#course-radius').value === '800')
     assert.equal(await nearbyDraw.getByLabel('후보 거리').inputValue(), '800')
@@ -1427,8 +2042,11 @@ async function main() {
     await singleSearch.fill('')
     await singleDraw.locator('#draw').click()
     assert.match(await singleDraw.locator('#draw-remaining').innerText(), /뽑을 수 있는 역이 한 곳/)
-    assert.ok(await singleDraw.locator('#redraw').isHidden())
-    await singleDraw.getByRole('button', { name: '코스 보기' }).click()
+    assert.equal(await singleDraw.locator('#redraw .lever-scene').evaluate((node) => node.getAnimations().length), 0)
+    await singleDraw.waitForTimeout(350)
+    assert.equal(await singleDraw.locator('#redraw .lever-scene').evaluate((node) => node.getAnimations().length), 0)
+    assert.ok(await singleDraw.locator('#redraw').isDisabled())
+    await singleDraw.locator('#open-draw-result').click()
     await singleDraw.getByRole('heading', { name: '안국역', exact: true }).waitFor()
     assert.equal(await singleDraw.locator('#station-name').innerText(), '안국역')
     assert.ok(await singleDraw.locator('#draw-from-course').isDisabled())
