@@ -35,6 +35,49 @@ async function chooseNextCandidate(page, key, label) {
   await options.nth((selected + 1) % before.length).click()
 }
 
+async function checkSharedNavigation(browser) {
+  const context = await browser.newContext({ viewport: { width: 320, height: 760 } })
+  try {
+    const page = await context.newPage()
+    await page.goto(new URL('?course=0208', home).href)
+    await chooseNextCandidate(page, 'food', '먹거리')
+    const own = await page.evaluate(() => localStorage.getItem('subway-date:draft:0208'))
+    const link = new URL('?station=0208&view=course&radius=800', home)
+    await page.goto(link.href)
+    await openCourseSettings(page)
+    await page.getByLabel('후보 거리', { exact: true }).selectOption('500')
+    assert.match(await page.locator('#shared-course-state').innerText(), /편집 중/)
+    assert.equal(await page.evaluate(() => localStorage.getItem('subway-date:draft:0208')), own)
+    await page.reload()
+    assert.match(await page.locator('#save-shared-course').innerText(), /현재 코스/)
+    await page.locator('#open-local-course').click()
+    assert.equal(new URL(page.url()).searchParams.get('course'), '0208')
+    await page.reload()
+    assert.ok(await page.locator('#result').evaluate(n => n.classList.contains('course-page')))
+    await page.goBack()
+    assert.equal(await page.getByLabel('후보 거리', { exact: true }).inputValue(), '500')
+    assert.match(await page.locator('#shared-course-state').innerText(), /편집 중/)
+    assert.equal(await page.evaluate(() => localStorage.getItem('subway-date:draft:0208')), own)
+    for (const query of ['?station=0208&view=course&radius=300', '?station=0318&view=course']) {
+      await page.goto(new URL(query, home).href)
+      assert.doesNotMatch(await page.locator('#shared-course-state').innerText(), /편집 중/)
+    }
+    await page.goto(new URL('?course=0208', home).href)
+    await page.locator('#back-to-draw').click()
+    await page.evaluate(() => {
+      window.qaStorageRead = Storage.prototype.getItem
+      Storage.prototype.getItem = () => { throw new Error('QA read unavailable') }
+    })
+    await page.goBack()
+    assert.equal(await page.evaluate(() => window.qaStorageRead.call(localStorage, 'subway-date:draft:0208')), own)
+    assert.match(await page.locator('#storage-recovery-message').innerText(), /저장본을 읽지 못/)
+    await page.evaluate(() => { Storage.prototype.getItem = window.qaStorageRead })
+    await page.locator('#retry-course-storage').click()
+    assert.ok(await page.locator('#storage-recovery').isHidden())
+    assert.equal(await page.evaluate(() => localStorage.getItem('subway-date:draft:0208')), own)
+  } finally { await context.close() }
+}
+
 async function main() {
   const browser = await chromium.launch({ channel: 'chrome', args: ['--host-resolver-rules=MAP tile.openstreetmap.org ~NOTFOUND, MAP oapi.map.naver.com ~NOTFOUND'] })
   try {
@@ -1568,6 +1611,7 @@ async function main() {
     await singleDraw.locator('#draw-from-course').click()
     assert.ok(await singleDraw.locator('#draw-origin').isHidden())
     assert.deepEqual(errors, [])
+    await checkSharedNavigation(browser)
     console.log('Passed: draw animation, station and distance filters, touch map, course editing, reload, and sharing')
   } finally {
     await browser.close()

@@ -477,6 +477,21 @@ function isNearbyCandidate([, , , meters]) {
 
 const draftKey = 'subway-date:draft'
 const editedCoursesKey = 'subway-date:edited-courses'
+let draftReadFailed = false
+
+function showStorageRecovery(kind) {
+  const recovery = byId('storage-recovery')
+  recovery.hidden = false
+  recovery.dataset.kind = kind
+  const message = kind === 'read'
+    ? '저장본을 읽지 못했어요. 기존 저장본을 바꾸지 않아요. 현재 화면을 보관한 뒤 다시 불러오세요.'
+    : kind === 'metadata' ? '코스는 저장했지만 최근 저장 목록을 갱신하지 못했어요.'
+      : '현재 코스를 저장하지 못했어요. 새로고침 전에 복구용 링크나 텍스트로 보관하세요.'
+  const notice = byId('storage-recovery-message')
+  if (notice.textContent !== message) notice.textContent = message
+  byId('retry-course-storage').textContent = kind === 'read' ? '저장본 다시 불러오기'
+    : kind === 'metadata' ? '저장 목록 다시 갱신' : '현재 코스 저장 다시 시도'
+}
 
 function editedCourseIds() {
   try {
@@ -533,6 +548,7 @@ function renderSavedCourses() {
 }
 
 function readDraft(stationId = null) {
+  draftReadFailed = false
   try {
     if (stationId) {
       const saved = localStorage.getItem(draftKey + ':' + stationId)
@@ -542,7 +558,8 @@ function readDraft(stationId = null) {
     if (draft && (!stationId || stationId === draft.station) &&
         stations.has(draft.station) && typeof draft.course === 'string') return draft
   } catch {
-    // The app still works when browser storage is unavailable.
+    draftReadFailed = true
+    showStorageRecovery('read')
   }
   return null
 }
@@ -622,18 +639,32 @@ function saveDraft(station, edited = true, saveShared = false) {
     refreshSharedSaveActions()
     return false
   }
+  readDraft(station.id)
+  if (draftReadFailed) return false
   try {
-    const serialized = course.toString()
+    localStorage.getItem(editedCoursesKey)
+  } catch {
+    showStorageRecovery('read')
+    return false
+  }
+  const serialized = course.toString()
+  try {
     localStorage.setItem(draftKey + ':' + station.id, serialized)
-    openedDraft = serialized
+  } catch {
+    showStorageRecovery('write')
+    return false
+  }
+  openedDraft = serialized
+  try {
     localStorage.setItem(draftKey, JSON.stringify({ station: station.id, course: serialized }))
     if (edited) {
       const ids = [station.id, ...editedCourseIds().filter((id) => id !== station.id)]
       localStorage.setItem(editedCoursesKey, JSON.stringify(ids))
     }
+    byId('storage-recovery').hidden = true
   } catch {
-    // The active course remains available for this visit.
-    return false
+    // The per-station draft is committed; a recent-list failure must not be called data loss.
+    showStorageRecovery('metadata')
   }
   byId('updated-course-actions').hidden = true
   if (edited && !saveShared) renderSavedCourses()
@@ -642,6 +673,7 @@ function saveDraft(station, edited = true, saveShared = false) {
 
 function selectStation(station, centerOnMap = false, scroll = true, sharedCourse = null, useNearbyDefaults = false) {
   if (drawing) return
+  byId('storage-recovery').hidden = true
   if (selected && selected !== station) markers.get(selected.id).marker.removeAttribute('aria-current')
   selected = station
   markers.get(station.id).marker.setAttribute('aria-current', 'true')
@@ -2390,6 +2422,40 @@ function sharedCourseUrl() {
   return url.href
 }
 
+function recoveryCourseUrl() {
+  const url = new URL(location.href)
+  url.search = new URLSearchParams({ station: selected.id, view: 'course', ...Object.fromEntries(courseParams()) }).toString()
+  url.hash = ''
+  return url.href
+}
+
+byId('copy-recovery-link').addEventListener('click', (event) => {
+  if (selected) copyResult(recoveryCourseUrl(), '링크', event.currentTarget)
+})
+byId('copy-recovery-text').addEventListener('click', (event) => {
+  if (selected) copyResult(courseText({ includeCourseLink: false }) + '\n\n복구용 링크\n' + recoveryCourseUrl(), '코스 텍스트', event.currentTarget)
+})
+byId('retry-course-storage').addEventListener('click', () => {
+  if (!selected) return
+  if (byId('storage-recovery').dataset.kind === 'read') {
+    readDraft(selected.id)
+    if (draftReadFailed) return
+    try { localStorage.getItem(editedCoursesKey) }
+    catch { showStorageRecovery('read'); return }
+    byId('storage-recovery').hidden = true
+    if (viewingSharedCourse) {
+      refreshSharedSaveActions()
+      byId('share-status').textContent = '이 기기의 저장본을 다시 확인했어요.'
+      focusSection(byId('share-status'))
+    }
+    else selectStation(selected, true)
+  } else if (viewingSharedCourse) byId('save-shared-course').click()
+  else if (saveDraft(selected)) {
+    byId('share-status').textContent = '현재 코스를 이 기기에 저장했어요.'
+    focusSection(byId('share-status'))
+  }
+})
+
 byId('share-station').addEventListener('click', (event) => {
   if (!selected) return
   copyResult(sharedCourseUrl(), '링크', event.currentTarget)
@@ -2489,7 +2555,7 @@ function clearShareFeedback() {
 function dismissManualCopy() {
   const trigger = manualCopyTrigger
   clearShareFeedback()
-  if (trigger && (trigger.id === 'share-course-primary' || byId('course-tools').open)) trigger.focus()
+  if (trigger && (trigger.id === 'share-course-primary' || byId('course-tools').open || (byId('storage-recovery').contains(trigger) && !byId('storage-recovery').hidden))) trigger.focus()
   else byId('course-tools').querySelector('summary').focus()
 }
 
