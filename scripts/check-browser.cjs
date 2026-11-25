@@ -351,6 +351,53 @@ async function checkDistancePreference(browser) {
   } finally { await sender.close(); await receiver.close() }
 }
 
+async function checkSingleFallbackChoice(browser) {
+  const context = await browser.newContext({ viewport: { width: 320, height: 844 }, reducedMotion: 'reduce' })
+  try {
+    const page = await context.newPage()
+    const card = page.locator('#course [data-category="activity"]')
+    const chooseCurrent = card.getByRole('button', { name: '영등포근린공원 현재 장소로 선택', exact: true })
+    await page.goto(new URL('?course=1032', home).href)
+    assert.equal(await chooseCurrent.count(), 0)
+    await openCourseSettings(page)
+    await page.locator('#course-radius').selectOption('800')
+    await page.locator('#course-overview [data-change-category="activity"]').click()
+    await card.getByRole('button', { name: /^중마루근린공원/ }).click()
+    const old = new URLSearchParams(await page.evaluate(() => localStorage.getItem('subway-date:draft:1032'))).get('activity')
+    await page.locator('#course-radius').selectOption('500')
+    assert.equal(await card.locator('.candidate-picker').count(), 0)
+    assert.equal(await card.locator('div[aria-live] > strong').innerText(), '영등포근린공원')
+    assert.equal(new URLSearchParams(await page.evaluate(() => localStorage.getItem('subway-date:draft:1032'))).get('preferred-activity'), old)
+    await chooseCurrent.focus()
+    await page.keyboard.press('Enter')
+    assert.ok(await card.locator('h3').evaluate(n => n === document.activeElement))
+    assert.equal(await chooseCurrent.count(), 0)
+    assert.doesNotMatch(await card.innerText(), /이전에 고른 장소/)
+    const current = new URLSearchParams(await page.evaluate(() => localStorage.getItem('subway-date:draft:1032')))
+    assert.equal(JSON.parse(current.get('activity'))[0], '영등포근린공원')
+    assert.equal(current.has('preferred-activity'), false)
+    await page.locator('#course-radius').selectOption('800')
+    await page.reload()
+    assert.equal(await card.locator('div[aria-live] > strong').innerText(), '영등포근린공원')
+    await page.locator('#back-to-draw').click()
+    await page.goBack()
+    assert.equal(await card.locator('div[aria-live] > strong').innerText(), '영등포근린공원')
+    await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { window.qaSingleLink = text } } }))
+    await page.locator('#course-tools summary').click()
+    await page.locator('#share-station').click()
+    const link = new URL(await page.evaluate(() => window.qaSingleLink))
+    assert.equal(JSON.parse(link.searchParams.get('activity'))[0], '영등포근린공원')
+    assert.equal(link.searchParams.has('preferred-activity'), false)
+    const receiver = await browser.newContext()
+    try {
+      const received = await receiver.newPage()
+      await received.goto(link.href)
+      assert.equal(await received.locator('[data-category="activity"] div[aria-live] > strong').innerText(), '영등포근린공원')
+    } finally { await receiver.close() }
+    console.log('Passed: one valid fallback can explicitly replace excluded preference, with keyboard focus, persistence and current-only sharing')
+  } finally { await context.close() }
+}
+
 async function main() {
   const browser = await chromium.launch({ channel: 'chrome', args: ['--host-resolver-rules=MAP tile.openstreetmap.org ~NOTFOUND, MAP oapi.map.naver.com ~NOTFOUND'] })
   try {
@@ -1891,6 +1938,7 @@ async function main() {
     await checkCourseSummaryEntry(browser)
     await checkUnavailableSummary(browser)
     await checkDistancePreference(browser)
+    await checkSingleFallbackChoice(browser)
     console.log('Passed: draw animation, station and distance filters, touch map, course editing, reload, and sharing')
   } finally {
     await browser.close()

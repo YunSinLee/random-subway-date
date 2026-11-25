@@ -1070,7 +1070,7 @@ function renderCourse(station, queryPrefix, sharedCourse) {
     const preferredOutsideRadius = allCandidates.find((candidate) =>
       candidateToken(candidate) === preferred && !defaults.includes(candidate))
     const preferenceNotice = document.createElement('p')
-    preferenceNotice.className = 'place-source'
+    preferenceNotice.className = 'place-source course-preference'
     if (preferredOutsideRadius) {
       const [name, , , meters] = preferredOutsideRadius
       preferenceNotice.textContent = `이전에 고른 장소는 거리 조건 밖에 있어요. ${name}까지 ${outsideRadiusDistance(meters, radius)}예요. 조건을 넓히면 다시 선택돼요.`
@@ -1410,6 +1410,22 @@ function renderCourse(station, queryPrefix, sharedCourse) {
           : '코스 거리 조건을 해제해 이전 장소 선택'
         restore.addEventListener('click', () => changeRadius(wider?.value ?? ''))
         preferenceNotice.append(' ', restore)
+      }
+      if (candidates.length === 1) {
+        const keepCurrent = document.createElement('button')
+        keepCurrent.type = 'button'
+        keepCurrent.textContent = '현재 장소로 선택'
+        keepCurrent.setAttribute('aria-label', candidates[0][0] + ' 현재 장소로 선택')
+        keepCurrent.addEventListener('click', () => {
+          const params = courseParams()
+          params.set(key, candidateToken(candidates[0]))
+          params.delete('preferred-' + key)
+          renderCourse(station, queryPrefix, params)
+          clearShareFeedback()
+          saveDraft(station)
+          focusSection(byId('course').querySelector(`[data-category="${key}"] h3`))
+        })
+        preferenceNotice.append(' ', keepCurrent)
       }
       content.append(preferenceNotice)
     }

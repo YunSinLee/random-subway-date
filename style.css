@@ -122,12 +122,13 @@ footer { padding: 15px 0 23px; }
 .course-stop h3 { margin: 0; font-size: 12px; color: var(--muted); }
 .course-stop p { font-size: 13px; margin-top: 3px; color: var(--muted); }
 .course-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: auto; }
-.course-actions a, .course-actions button, .candidate-picker :is(a, button) {
+.course-actions a, .course-actions button, .candidate-picker :is(a, button), .course-preference button {
   padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px;
   background: #fffefa; font-size: 12px; text-decoration: none;
 }
+.course-preference button { max-width: 100%; margin-top: 4px; }
 @media (pointer: coarse) {
-  .course-actions a, .course-actions button, .candidate-picker :is(a, button),
+  .course-actions a, .course-actions button, .candidate-picker :is(a, button), .course-preference button,
   .course-tools button, .course-tools summary,
   .shared-course-actions button,
   .ticket-actions button, .ticket-header button,
