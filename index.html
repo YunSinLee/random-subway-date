@@ -189,19 +189,25 @@
       <details id="course-settings" class="course-settings">
         <summary>코스 편집</summary>
         <div class="course-order">
-          <label for="course-order">방문 순서</label>
-          <select id="course-order"></select>
-          <label for="course-radius">후보 거리</label>
-          <select id="course-radius" aria-describedby="course-radius-note course-radius-exceptions">
-            <option value="">전체 거리</option>
-            <option value="300">직선 300m 이내</option>
-            <option value="500">직선 500m 이내</option>
-            <option value="800">직선 800m 이내</option>
-            <option value="1000">직선 1km 이내</option>
-          </select>
-          <button type="button" id="shortest-order" hidden>직선거리가 짧은 순서 적용</button>
-          <button type="button" id="undo-shortest-order" hidden>이전 방문 순서로 되돌리기</button>
-          <button type="button" id="reset-course">기본 코스로 되돌리기</button>
+          <div class="course-order-field">
+            <label for="course-order">방문 순서</label>
+            <select id="course-order"></select>
+          </div>
+          <div class="course-order-field">
+            <label for="course-radius">후보 거리</label>
+            <select id="course-radius" aria-describedby="course-radius-note course-radius-exceptions">
+              <option value="">전체 거리</option>
+              <option value="300">직선 300m 이내</option>
+              <option value="500">직선 500m 이내</option>
+              <option value="800">직선 800m 이내</option>
+              <option value="1000">직선 1km 이내</option>
+            </select>
+          </div>
+          <div class="course-order-actions">
+            <button type="button" id="shortest-order" hidden>직선거리가 짧은 순서 적용</button>
+            <button type="button" id="undo-shortest-order" hidden>이전 방문 순서로 되돌리기</button>
+            <button type="button" id="reset-course">기본 코스로 되돌리기</button>
+          </div>
           <span id="course-order-status" class="sr-only" role="status"></span>
         </div>
         <p id="course-radius-note" class="course-distance">후보 거리는 역에서 잰 직선거리예요. 실제 도보 거리와 달라요.</p>
