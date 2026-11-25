@@ -603,6 +603,7 @@ function courseParams({ includePreferences = true, preserveUnresolved = viewingS
 }
 
 let viewingSharedCourse = false
+let openedSharedCourse = null
 let openedDraft = null
 
 function saveDraft(station, edited = true, saveShared = false) {
@@ -617,7 +618,10 @@ function saveDraft(station, edited = true, saveShared = false) {
     }
     if (url.href !== location.href) history.replaceState(history.state, '', url.href)
   }
-  if (viewingSharedCourse && !saveShared) return false
+  if (viewingSharedCourse && !saveShared) {
+    refreshSharedSaveActions()
+    return false
+  }
   try {
     const serialized = course.toString()
     localStorage.setItem(draftKey + ':' + station.id, serialized)
@@ -644,6 +648,7 @@ function selectStation(station, centerOnMap = false, scroll = true, sharedCourse
   byId('course-walk').open = false
   courseMapDisclosure.open = !byId('result').classList.contains('course-page')
   viewingSharedCourse = Boolean(sharedCourse)
+  openedSharedCourse = null
   for (const button of byId('saved-course-list').querySelectorAll('button')) {
     if (!sharedCourse && button.dataset.stationId === station.id) button.setAttribute('aria-current', 'true')
     else button.removeAttribute('aria-current')
@@ -678,6 +683,13 @@ function selectStation(station, centerOnMap = false, scroll = true, sharedCourse
     ? new URLSearchParams(draft.course)
     : null
   renderCourse(station, queryPrefix, sharedCourse ?? savedCourse ?? defaultCourse)
+  if (viewingSharedCourse) {
+    const origin = history.state?.sharedCourseOrigin
+    openedSharedCourse = origin?.station === station.id && typeof origin.course === 'string'
+      ? origin.course : courseParams().toString()
+    history.replaceState({ ...history.state, sharedCourseOrigin: { station: station.id, course: openedSharedCourse } }, '', location.href)
+    refreshSharedSaveActions()
+  }
   if (!sharedCourse) saveDraft(station, false)
   byId('result').hidden = false
   if (centerOnMap) {
@@ -1334,7 +1346,13 @@ function refreshSharedSaveActions() {
   const saveShared = byId('save-shared-course')
   const moveFocus = openLocal === document.activeElement
   openLocal.hidden = !(editedCourseIds().includes(selected.id) && readDraft(selected.id))
-  const hasChanges = !byId('shared-course-changes').hidden
+  const edited = openedSharedCourse !== null && courseParams().toString() !== openedSharedCourse
+  const stateMessage = edited
+    ? '공유 코스를 편집 중이에요 · 저장 전에는 이 기기의 저장본에 반영되지 않아요.'
+    : '공유받은 코스 · 저장 전에는 이 기기의 저장본에 반영되지 않아요.'
+  const sharedState = byId('shared-course-state')
+  if (sharedState.textContent !== stateMessage) sharedState.textContent = stateMessage
+  const hasChanges = edited || !byId('shared-course-changes').hidden
   const courseLabel = hasChanges ? '현재 코스' : '받은 코스'
   saveShared.textContent = openLocal.hidden ? courseLabel + ' 저장' : courseLabel + '로 저장본 바꾸기'
   if (moveFocus && openLocal.hidden) saveShared.focus({ preventScroll: true })
@@ -2320,7 +2338,14 @@ byId('reset-course').addEventListener('click', () => {
 })
 
 byId('open-local-course').addEventListener('click', () => {
-  if (selected && viewingSharedCourse) selectStation(selected, true)
+  if (selected && viewingSharedCourse) {
+    if (byId('result').classList.contains('course-page')) {
+      const url = new URL(location.href)
+      url.search = new URLSearchParams({ course: selected.id }).toString()
+      history.pushState(history.state, '', url.href)
+    }
+    selectStation(selected, true)
+  }
 })
 
 byId('open-updated-course').addEventListener('click', () => {
@@ -2329,6 +2354,8 @@ byId('open-updated-course').addEventListener('click', () => {
 
 byId('save-shared-course').addEventListener('click', () => {
   if (!selected) return
+  const savingCurrent = (openedSharedCourse !== null && courseParams().toString() !== openedSharedCourse)
+    || !byId('shared-course-changes').hidden
   clearShareFeedback()
   const saved = saveDraft(selected, true, true)
   const status = byId('share-status')
@@ -2340,8 +2367,12 @@ byId('save-shared-course').addEventListener('click', () => {
     const url = new URL(location.href)
     url.searchParams.delete('station')
     for (const key of courseQueryKeys) url.searchParams.delete(key)
+    if (byId('result').classList.contains('course-page')) {
+      url.searchParams.delete('view')
+      url.searchParams.set('course', selected.id)
+    }
     history.replaceState(history.state, '', url.href)
-    status.textContent = '받은 코스를 이 기기에 저장했어요.'
+    status.textContent = savingCurrent ? '현재 코스를 이 기기에 저장했어요.' : '받은 코스를 이 기기에 저장했어요.'
     status.focus({ preventScroll: true })
     byId('shared-course-actions').hidden = true
   } else {

@@ -602,7 +602,7 @@ async function main() {
     const restoredActivity = recipient.locator('[data-category="activity"]')
     assert.equal(await restoredActivity.locator('div[aria-live] > strong').innerText(), '이전 장소')
     assert.equal(await restoredActivity.locator('.place-address').innerText(), '이전 주소')
-    assert.ok(await recipient.getByRole('button', { name: '받은 코스로 저장본 바꾸기' }).isVisible())
+    assert.ok(await recipient.getByRole('button', { name: '현재 코스로 저장본 바꾸기' }).isVisible())
     await chooseNextCandidate(recipient, 'activity', '놀거리')
     assert.equal(await recipient.locator('#share-custom-note').getAttribute('hidden'), '')
     assert.equal(await recipient.locator('#share-station').getAttribute('aria-describedby'), 'course-overview' + localDescription)
