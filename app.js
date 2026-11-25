@@ -641,6 +641,7 @@ function renderSavedCourses() {
     return item
   })
   byId('saved-courses').hidden = !items.length
+  byId('open-saved-courses').hidden = !items.length
   list.replaceChildren(...items)
   if (focusedId) {
     const restored = items.map((item) => item.firstElementChild).find((button) => button.dataset.stationId === focusedId)
@@ -2844,6 +2845,13 @@ byId('show-station-on-map').addEventListener('click', () => {
   centerStation(selected)
   drawMap()
   focusSection(markers.get(selected.id).marker)
+})
+byId('open-saved-courses').addEventListener('click', () => {
+  const saved = byId('saved-courses')
+  if (saved.hidden) return
+  if (byId('draw-page').hidden) returnToDraw()
+  saved.open = true
+  focusSection(saved.querySelector('summary'))
 })
 function fitMapArea(stationList) {
   fitNetwork(stationList)
