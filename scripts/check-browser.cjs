@@ -52,6 +52,21 @@ async function checkSharedNavigation(browser) {
     assert.ok((await page.locator('#saved-course-list button').boundingBox()).height >= 44)
     await page.locator('#saved-course-list [data-station-id="0208"]').press('Enter')
     assert.equal(await page.evaluate(() => localStorage.getItem('subway-date:draft:0208')), own)
+    const editedIds = await page.evaluate(() => localStorage.getItem('subway-date:edited-courses'))
+    await openCourseSettings(page)
+    await page.evaluate(() => {
+      window.qaResetSet = Storage.prototype.setItem
+      Storage.prototype.setItem = function(key, value) {
+        if (key === 'subway-date:draft:0208') throw new Error('QA course write unavailable')
+        return window.qaResetSet.call(this, key, value)
+      }
+    })
+    page.once('dialog', dialog => dialog.accept())
+    await page.locator('#reset-course').click()
+    assert.equal(await page.evaluate(() => localStorage.getItem('subway-date:draft:0208')), own)
+    assert.equal(await page.evaluate(() => localStorage.getItem('subway-date:edited-courses')), editedIds)
+    assert.match(await page.locator('#share-status').innerText(), /화면만.*아직 저장하지 못/)
+    await page.evaluate(() => { Storage.prototype.setItem = window.qaResetSet })
     const link = new URL('?station=0208&view=course&radius=800', home)
     await page.goto(link.href)
     assert.match(await page.locator('#course-context-text').innerText(), /공유받은 코스/)

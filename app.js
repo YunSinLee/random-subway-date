@@ -2568,16 +2568,20 @@ byId('reset-course').addEventListener('click', () => {
   customFormDrafts.clear()
   renderCourse(selected, stationMapQuery(selected), null)
   clearShareFeedback()
-  saveDraft(selected, false)
+  const saved = saveDraft(selected, false)
   if (viewingSharedCourse) {
     byId('share-status').textContent = '열어 본 코스를 기본값으로 되돌렸어요.'
+    return
+  }
+  if (!saved) {
+    byId('share-status').textContent = '화면만 기본 코스로 되돌렸어요. 아직 저장하지 못했어요.'
     return
   }
   try {
     const remaining = editedCourseIds().filter((id) => id !== selected.id)
     localStorage.setItem(editedCoursesKey, JSON.stringify(remaining))
   } catch {
-    // The visible course was already reset.
+    showStorageRecovery('metadata')
   }
   renderSavedCourses()
   byId('share-status').textContent = '기본 코스로 되돌렸어요.'
