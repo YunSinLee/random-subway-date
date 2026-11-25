@@ -1490,20 +1490,26 @@ function courseJumpButton(key, label, { needsSearch = false, fromMap = false } =
 
 const mapPlace = byId('map-place')
 let activeMapStop = null
+let mapPlaceTrigger = null
 
 function closeMapPlace(restoreFocus = false) {
-  if (restoreFocus && activeMapStop) {
-    byId('course-map-legend').querySelector(`[data-map-stop="${activeMapStop}"]`)?.focus({ preventScroll: true })
-  }
+  const target = mapPlaceTrigger?.isConnected ? mapPlaceTrigger
+    : byId('course-map-legend').querySelector(`[data-map-detail="${activeMapStop}"]`)
   mapPlace.hidden = true
   activeMapStop = null
+  mapPlaceTrigger = null
+  if (restoreFocus && target) {
+    target.focus({ preventScroll: true })
+    target.scrollIntoView({ block: 'nearest' })
+  }
 }
 
-function showMapPlace(key) {
+function showMapPlace(key, trigger = null) {
   const place = courseSelection.get(key)
   if (!place) return
   const step = visitOrder().filter((category) => !omittedStops.has(category)).indexOf(key) + 1
   activeMapStop = key
+  mapPlaceTrigger = trigger
   const heading = byId('map-place-name')
   heading.textContent = place.name
   byId('map-place-category').textContent = `${step}. ${categoryLabels.get(key)}`
@@ -1522,6 +1528,7 @@ function showMapPlace(key) {
   byId('map-place-actions').replaceChildren(externalMapLink('네이버 지도', place.url), details)
   mapPlace.hidden = false
   heading.focus({ preventScroll: true })
+  heading.scrollIntoView({ block: 'center' })
 }
 
 byId('close-map-place').addEventListener('click', () => closeMapPlace(true))
@@ -1771,7 +1778,14 @@ function renderCourseMap(station) {
       }
       marker.addEventListener('mouseenter', () => button.classList.add('highlighted'))
       marker.addEventListener('mouseleave', () => button.classList.remove('highlighted'))
-      item.append(button)
+      const detail = document.createElement('button')
+      detail.type = 'button'
+      detail.className = 'map-detail-button'
+      detail.dataset.mapDetail = key
+      detail.textContent = '지도 상세'
+      detail.setAttribute('aria-label', label + ' · 지도 상세 보기')
+      detail.addEventListener('click', () => showMapPlace(key, detail))
+      item.append(button, detail)
     } else {
       item.textContent = label
     }

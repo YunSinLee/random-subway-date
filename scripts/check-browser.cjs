@@ -907,7 +907,7 @@ async function main() {
     assert.ok(await recipient.locator('[data-category="activity"] h3').evaluate((heading) => heading === document.activeElement))
     await recipient.getByRole('button', { name: '코스 지도로 돌아가기' }).click()
     assert.equal(await recipient.locator(':focus').getAttribute('data-category'), 'activity')
-    const firstLegendStop = recipient.locator('#course-map-legend').getByRole('button', { name: /^1\. 놀거리/ })
+    const firstLegendStop = recipient.locator('#course-map-legend').getByRole('button', { name: /^1\. 놀거리.*장소 카드로 이동$/ })
     await firstLegendStop.focus()
     assert.equal(await recipient.locator('.course-map-marker.highlighted').textContent(), '1')
     await firstLegendStop.press('Enter')

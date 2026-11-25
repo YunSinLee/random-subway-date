@@ -359,6 +359,10 @@ footer { padding: 15px 0 23px; }
 #course-map-legend button {
   padding: 4px 0; border: 0; background: transparent; color: var(--green); text-decoration: underline;
 }
+#course-map-legend .map-detail-button {
+  margin-left: 8px; padding-inline: 8px; border: 1px solid var(--border);
+  border-radius: 6px; text-decoration: none;
+}
 .course-stop h3:focus { outline: 2px solid var(--green); outline-offset: 3px; }
 .course-scale-bar { fill: none; stroke: #4f5e52; stroke-width: 1.5; }
 .course-scale-label { fill: #39463c; font-size: 10px; font-weight: 700; text-anchor: middle; }
