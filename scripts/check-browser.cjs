@@ -39,8 +39,30 @@ async function checkSharedNavigation(browser) {
   const context = await browser.newContext({ viewport: { width: 320, height: 760 }, hasTouch: true, isMobile: true })
   try {
     const page = await context.newPage()
+    for (const id of ['0318', '2619', '2523', '9040']) {
+      await page.goto(new URL('?course=' + id, home).href)
+      await openCourseSettings(page)
+      await page.locator('#course-radius').selectOption('800')
+    }
     await page.goto(new URL('?course=0208', home).href)
     await chooseNextCandidate(page, 'food', '먹거리')
+    await openCourseSettings(page)
+    const listBeforeReadFailure = await page.evaluate(() => localStorage.getItem('subway-date:edited-courses'))
+    await page.evaluate(() => {
+      window.qaListGet = Storage.prototype.getItem
+      window.qaListReads = 0
+      Storage.prototype.getItem = function(key) {
+        if (key === 'subway-date:edited-courses' && ++window.qaListReads === 2) throw new Error('QA second list read unavailable')
+        return window.qaListGet.call(this, key)
+      }
+    })
+    await page.locator('#course-radius').selectOption('500')
+    assert.equal(await page.evaluate(() => localStorage.getItem('subway-date:edited-courses')), listBeforeReadFailure)
+    assert.equal(await page.locator('#storage-recovery').getAttribute('data-kind'), 'metadata')
+    assert.equal(new URLSearchParams(await page.evaluate(() => localStorage.getItem('subway-date:draft:0208'))).get('radius'), '500')
+    await page.evaluate(() => { Storage.prototype.getItem = window.qaListGet })
+    await page.locator('#retry-course-storage').click()
+    assert.equal(await page.locator('#saved-course-list button').count(), 5)
     const own = await page.evaluate(() => localStorage.getItem('subway-date:draft:0208'))
     assert.ok(await page.evaluate(() => matchMedia('(pointer: coarse)').matches && navigator.maxTouchPoints > 0))
     assert.ok((await page.locator('#open-saved-courses').boundingBox()).height >= 44)
@@ -49,7 +71,7 @@ async function checkSharedNavigation(browser) {
     assert.ok(await page.locator('#saved-courses').evaluate(n => n.open))
     assert.ok(await page.locator('#saved-courses summary').evaluate(n => n === document.activeElement))
     assert.ok((await page.locator('#saved-courses summary').boundingBox()).height >= 44)
-    assert.ok((await page.locator('#saved-course-list button').boundingBox()).height >= 44)
+    assert.ok((await page.locator('#saved-course-list [data-station-id="0208"]').boundingBox()).height >= 44)
     await page.locator('#saved-course-list [data-station-id="0208"]').press('Enter')
     assert.equal(await page.evaluate(() => localStorage.getItem('subway-date:draft:0208')), own)
     const editedIds = await page.evaluate(() => localStorage.getItem('subway-date:edited-courses'))

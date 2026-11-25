@@ -601,7 +601,8 @@ function editedCourseIds() {
     const ids = JSON.parse(localStorage.getItem(editedCoursesKey))
     if (Array.isArray(ids)) return [...new Set(ids.filter((id) => stations.has(id)))]
   } catch {
-    // The list can remain empty when browser storage is unavailable.
+    // A failed read must never become an empty list in a later write.
+    return null
   }
   return []
 }
@@ -616,8 +617,10 @@ function savedPlaceNames(params) {
 
 function renderSavedCourses() {
   const list = byId('saved-course-list')
+  const ids = editedCourseIds()
+  if (ids === null) return
   const focusedId = list.contains(document.activeElement) ? document.activeElement.dataset.stationId : null
-  const items = editedCourseIds().flatMap((id) => {
+  const items = ids.flatMap((id) => {
     const draft = readDraft(id)
     if (!draft) return []
     const station = stations.get(id)
@@ -769,7 +772,9 @@ function saveDraft(station, edited = true, saveShared = false) {
   try {
     localStorage.setItem(draftKey, JSON.stringify({ station: station.id, course: serialized }))
     if (edited) {
-      const ids = [station.id, ...editedCourseIds().filter((id) => id !== station.id)]
+      const previousIds = editedCourseIds()
+      if (previousIds === null) throw new Error('Saved-course list could not be read')
+      const ids = [station.id, ...previousIds.filter((id) => id !== station.id)]
       localStorage.setItem(editedCoursesKey, JSON.stringify(ids))
     }
     byId('storage-recovery').hidden = true
@@ -831,7 +836,8 @@ function selectStation(station, centerOnMap = false, scroll = true, sharedCourse
   byId('place-links').replaceChildren(naverLink('역 위치', queryPrefix), stationDirectionsLink(station))
   if (station.lines.includes('자기부상철도')) byId('place-links').append(maglevGuideLink())
   const defaultCourse = useNearbyDefaults ? nearbyCourseParams(station) : null
-  const savedCourse = draft && (!defaultCourse || editedCourseIds().includes(station.id))
+  // An unreadable index must not replace an available draft with nearby defaults.
+  const savedCourse = draft && (!defaultCourse || editedCourseIds()?.includes(station.id) !== false)
     ? new URLSearchParams(draft.course)
     : null
   renderCourse(station, queryPrefix, sharedCourse ?? savedCourse ?? defaultCourse)
@@ -1567,7 +1573,7 @@ function refreshSharedSaveActions() {
   const openLocal = byId('open-local-course')
   const saveShared = byId('save-shared-course')
   const moveFocus = openLocal === document.activeElement
-  openLocal.hidden = !(editedCourseIds().includes(selected.id) && readDraft(selected.id))
+  openLocal.hidden = !(editedCourseIds()?.includes(selected.id) && readDraft(selected.id))
   const edited = openedSharedCourse !== null && courseParams().toString() !== openedSharedCourse
   const stateMessage = edited
     ? '공유 코스를 편집 중이에요 · 저장 전에는 이 기기의 저장본에 반영되지 않아요.'
@@ -2262,7 +2268,7 @@ function refreshDrawCourseNotice(counts = courseCategories.map(([key, label]) =>
   if (nearbyOnly) coverage.textContent = `직선 800m 이내 · ${coverage.textContent}`
   coverage.hidden = false
   const savedCourseNotice = byId('draw-saved-course')
-  const draft = editedCourseIds().includes(drawResult.id) ? readDraft(drawResult.id) : null
+  const draft = editedCourseIds()?.includes(drawResult.id) ? readDraft(drawResult.id) : null
   savedCourseNotice.hidden = !draft
   byId('open-draw-result-label').textContent = savedCourseNotice.hidden ? '코스 보기' : '저장한 코스 보기'
   const resultDescription = ['draw-station', 'draw-line', 'draw-coverage']
@@ -2578,7 +2584,9 @@ byId('reset-course').addEventListener('click', () => {
     return
   }
   try {
-    const remaining = editedCourseIds().filter((id) => id !== selected.id)
+    const ids = editedCourseIds()
+    if (ids === null) throw new Error('Saved-course list could not be read')
+    const remaining = ids.filter((id) => id !== selected.id)
     localStorage.setItem(editedCoursesKey, JSON.stringify(remaining))
   } catch {
     showStorageRecovery('metadata')
@@ -2663,6 +2671,7 @@ byId('retry-course-storage').addEventListener('click', () => {
     try { localStorage.getItem(editedCoursesKey) }
     catch { showStorageRecovery('read'); return }
     byId('storage-recovery').hidden = true
+    renderSavedCourses()
     if (viewingSharedCourse) {
       refreshSharedSaveActions()
       byId('share-status').textContent = '이 기기의 저장본을 다시 확인했어요.'
