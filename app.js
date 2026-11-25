@@ -478,18 +478,22 @@ function isNearbyCandidate([, , , meters]) {
 const draftKey = 'subway-date:draft'
 const editedCoursesKey = 'subway-date:edited-courses'
 let draftReadFailed = false
+let unreadDraftContext = null
 
 function showStorageRecovery(kind) {
   const recovery = byId('storage-recovery')
   recovery.hidden = false
   recovery.dataset.kind = kind
+  const editedUnread = kind === 'read' && unreadDraftContext?.station === selected?.id && unreadDraftContext.edited
   const message = kind === 'read'
-    ? '저장본을 읽지 못했어요. 기존 저장본을 바꾸지 않아요. 현재 화면을 보관한 뒤 다시 불러오세요.'
+    ? editedUnread
+      ? '읽지 못한 저장본 대신 현재 화면을 편집 중이에요. 아직 저장하지 않았어요. 저장본을 다시 열면 현재 편집을 대체해요. 먼저 복구용 링크로 보관하세요.'
+      : '저장본을 읽지 못했어요. 기존 저장본을 바꾸지 않아요. 현재 화면을 보관한 뒤 다시 불러오세요.'
     : kind === 'metadata' ? '코스는 저장했지만 최근 저장 목록을 갱신하지 못했어요.'
       : '현재 코스를 저장하지 못했어요. 새로고침 전에 복구용 링크나 텍스트로 보관하세요.'
   const notice = byId('storage-recovery-message')
   if (notice.textContent !== message) notice.textContent = message
-  byId('retry-course-storage').textContent = kind === 'read' ? '저장본 다시 불러오기'
+  byId('retry-course-storage').textContent = kind === 'read' ? editedUnread ? '현재 편집 대신 저장본 열기' : '저장본 다시 불러오기'
     : kind === 'metadata' ? '저장 목록 다시 갱신' : '현재 코스 저장 다시 시도'
 }
 
@@ -639,6 +643,11 @@ function saveDraft(station, edited = true, saveShared = false) {
     refreshSharedSaveActions()
     return false
   }
+  if (!saveShared && unreadDraftContext?.station === station.id) {
+    if (edited) unreadDraftContext.edited = true
+    showStorageRecovery('read')
+    return false
+  }
   readDraft(station.id)
   if (draftReadFailed) return false
   try {
@@ -674,6 +683,7 @@ function saveDraft(station, edited = true, saveShared = false) {
 function selectStation(station, centerOnMap = false, scroll = true, sharedCourse = null, useNearbyDefaults = false) {
   if (drawing) return
   byId('storage-recovery').hidden = true
+  unreadDraftContext = null
   if (selected && selected !== station) markers.get(selected.id).marker.removeAttribute('aria-current')
   selected = station
   markers.get(station.id).marker.setAttribute('aria-current', 'true')
@@ -689,6 +699,7 @@ function selectStation(station, centerOnMap = false, scroll = true, sharedCourse
   byId('course-tools').open = false
   byId('course-settings').open = false
   const draft = readDraft(station.id)
+  if (draftReadFailed && !sharedCourse) unreadDraftContext = { station: station.id, edited: false }
   openedDraft = draft?.course ?? null
   byId('updated-course-actions').hidden = true
   byId('shared-course-actions').hidden = !sharedCourse
@@ -2437,7 +2448,8 @@ byId('copy-recovery-text').addEventListener('click', (event) => {
 })
 byId('retry-course-storage').addEventListener('click', () => {
   if (!selected) return
-  if (byId('storage-recovery').dataset.kind === 'read') {
+  const retryKind = byId('storage-recovery').dataset.kind
+  if (retryKind === 'read') {
     readDraft(selected.id)
     if (draftReadFailed) return
     try { localStorage.getItem(editedCoursesKey) }
@@ -2451,7 +2463,9 @@ byId('retry-course-storage').addEventListener('click', () => {
     else selectStation(selected, true)
   } else if (viewingSharedCourse) byId('save-shared-course').click()
   else if (saveDraft(selected)) {
-    byId('share-status').textContent = '현재 코스를 이 기기에 저장했어요.'
+    byId('share-status').textContent = !byId('storage-recovery').hidden
+      ? '코스는 저장했지만 최근 저장 목록을 아직 갱신하지 못했어요.'
+      : retryKind === 'metadata' ? '최근 저장 목록을 갱신했어요.' : '현재 코스를 이 기기에 저장했어요.'
     focusSection(byId('share-status'))
   }
 })

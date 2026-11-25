@@ -66,11 +66,20 @@ async function checkSharedNavigation(browser) {
     await page.locator('#back-to-draw').click()
     await page.evaluate(() => {
       window.qaStorageRead = Storage.prototype.getItem
-      Storage.prototype.getItem = () => { throw new Error('QA read unavailable') }
+      window.qaStationReads = 0
+      Storage.prototype.getItem = function(key) {
+        if (key === 'subway-date:draft:0208' && ++window.qaStationReads === 1) throw new Error('QA first station read unavailable')
+        return window.qaStorageRead.call(this, key)
+      }
     })
     await page.goBack()
     assert.equal(await page.evaluate(() => window.qaStorageRead.call(localStorage, 'subway-date:draft:0208')), own)
     assert.match(await page.locator('#storage-recovery-message').innerText(), /저장본을 읽지 못/)
+    assert.equal(await page.evaluate(() => localStorage.getItem('subway-date:draft:0208')), own)
+    await openCourseSettings(page)
+    await page.getByLabel('후보 거리', { exact: true }).selectOption('300')
+    assert.equal(await page.evaluate(() => localStorage.getItem('subway-date:draft:0208')), own)
+    assert.equal(await page.locator('#retry-course-storage').innerText(), '현재 편집 대신 저장본 열기')
     await page.evaluate(() => { Storage.prototype.getItem = window.qaStorageRead })
     await page.locator('#retry-course-storage').click()
     assert.ok(await page.locator('#storage-recovery').isHidden())
