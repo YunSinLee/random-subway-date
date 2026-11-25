@@ -36,16 +36,20 @@ async function chooseNextCandidate(page, key, label) {
 }
 
 async function checkSharedNavigation(browser) {
-  const context = await browser.newContext({ viewport: { width: 320, height: 760 } })
+  const context = await browser.newContext({ viewport: { width: 320, height: 760 }, hasTouch: true, isMobile: true })
   try {
     const page = await context.newPage()
     await page.goto(new URL('?course=0208', home).href)
     await chooseNextCandidate(page, 'food', '먹거리')
     const own = await page.evaluate(() => localStorage.getItem('subway-date:draft:0208'))
+    assert.ok(await page.evaluate(() => matchMedia('(pointer: coarse)').matches && navigator.maxTouchPoints > 0))
+    assert.ok((await page.locator('#open-saved-courses').boundingBox()).height >= 44)
     await page.locator('#open-saved-courses').focus()
     await page.keyboard.press('Enter')
     assert.ok(await page.locator('#saved-courses').evaluate(n => n.open))
     assert.ok(await page.locator('#saved-courses summary').evaluate(n => n === document.activeElement))
+    assert.ok((await page.locator('#saved-courses summary').boundingBox()).height >= 44)
+    assert.ok((await page.locator('#saved-course-list button').boundingBox()).height >= 44)
     await page.locator('#saved-course-list [data-station-id="0208"]').press('Enter')
     assert.equal(await page.evaluate(() => localStorage.getItem('subway-date:draft:0208')), own)
     const link = new URL('?station=0208&view=course&radius=800', home)
