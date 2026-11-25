@@ -382,6 +382,13 @@ footer { padding: 15px 0 23px; }
   display: inline; padding: 3px 1px; border: 0; background: transparent;
   color: inherit; text-decoration: underline; overflow-wrap: anywhere;
 }
+#course-map-missing p { margin: 0; }
+#course-map-missing ul { list-style: none; padding: 0; margin: 4px 0 0; }
+#course-map-missing li + li { margin-top: 4px; }
+#course-map-missing button {
+  display: block; width: 100%; min-height: 44px; padding: 8px 4px;
+  text-align: start; line-height: 1.5;
+}
 .saved-courses { margin-bottom: 12px; font-size: 13px; }
 .saved-courses summary { width: fit-content; cursor: pointer; color: var(--green); }
 .saved-courses ul {

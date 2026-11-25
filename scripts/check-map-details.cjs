@@ -106,7 +106,10 @@ async function checkDetails(page, key, closeWithEscape) {
         } else {
           assert.ok(await page.locator('#map-place').isHidden())
           assert.equal(await page.locator(':focus').getAttribute('data-map-stop'), 'food')
-          assert.match(await page.locator('#course-map-missing').innerText(), /좌표가 없어.*좌표 없는 후보/)
+          assert.match(await page.locator('#course-map-missing').innerText(), /좌표가 없어[\s\S]*좌표 없는 후보/)
+          const missingList = page.getByRole('list', { name: '좌표가 없어 지도에 표시되지 않은 장소 · 방문 순번' })
+          assert.equal(await missingList.getByRole('listitem').count(), 1)
+          assert.ok((await missingList.getByRole('button').boundingBox()).height >= 44)
           await page.locator('#edit-course-summary').click()
           for (const [order, step] of [['food,cafe,activity', 1], ['cafe,activity,food', 3], ['activity,food,cafe', 2]]) {
             await page.locator('#course-order').selectOption(order)

@@ -1894,12 +1894,18 @@ function renderCourseMap(station) {
   missing.hidden = !unmapped.length
   missing.replaceChildren()
   if (unmapped.length) {
-    missing.append('좌표가 없어 지도에 표시되지 않은 장소 · 방문 순번 ')
-    for (const [index, [key, stop]] of unmapped.entries()) {
-      if (index) missing.append(', ')
+    const caption = document.createElement('p')
+    caption.id = 'course-map-missing-label'
+    caption.textContent = '좌표가 없어 지도에 표시되지 않은 장소 · 방문 순번'
+    const list = document.createElement('ul')
+    list.setAttribute('aria-labelledby', caption.id)
+    for (const [key, stop] of unmapped) {
       const label = `${included.indexOf(key) + 1}. ${categoryLabels.get(key)} · ${stop.name}`
-      missing.append(courseJumpButton(key, label, { fromMap: true }))
+      const item = document.createElement('li')
+      item.append(courseJumpButton(key, label, { fromMap: true }))
+      list.append(item)
     }
+    missing.append(caption, list)
   }
 
   const width = 560
