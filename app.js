@@ -10,6 +10,8 @@ import shopSourceMonth from './data/shop-source.js'
 
 const byId = (id) => document.getElementById(id)
 const appTitle = document.title
+const courseEditContext = byId('course-edit-context')
+let courseEditTarget = null
 const map = byId('map')
 const drawSettings = byId('draw-settings')
 const renderNaverCourseMap = createNaverCourseMap(
@@ -480,6 +482,48 @@ const editedCoursesKey = 'subway-date:edited-courses'
 let draftReadFailed = false
 let unreadDraftContext = null
 
+function updateCourseContext() {
+  const summary = byId('course-context')
+  summary.hidden = !selected
+  if (!selected) return
+  const recovery = byId('storage-recovery')
+  let text = '이 기기에 저장된 코스'
+  let action = '공유 동작 보기'
+  let target = 'share-course-primary'
+  if (!recovery.hidden) {
+    const metadata = recovery.dataset.kind === 'metadata'
+    text = metadata ? '코스 저장됨 · 목록 갱신 필요'
+      : recovery.dataset.kind === 'read' ? unreadDraftContext?.edited ? '현재 편집 미저장' : '저장본 확인 실패 · 자동 저장 중지'
+        : '현재 코스 저장 실패'
+    action = metadata ? '목록 갱신 동작 보기' : '보관·복구 동작 보기'
+    target = metadata ? 'retry-course-storage' : 'copy-recovery-link'
+  } else if (viewingSharedCourse) {
+    const edited = openedSharedCourse !== null && courseParams().toString() !== openedSharedCourse
+    text = edited ? '공유 편집본 · 이 기기에 저장 전' : '공유받은 코스 · 이 기기에 저장 전'
+    action = '저장 동작 보기'
+    target = 'save-shared-course'
+  }
+  for (const row of [summary, courseEditContext]) {
+    row.querySelector('span').textContent = text
+    const button = row.querySelector('button')
+    button.textContent = action
+    button.setAttribute('aria-controls', target)
+  }
+  const editor = courseEditTarget === 'settings' ? byId('course-settings')
+    : courseEditTarget && byId('course').querySelector(`[data-category="${courseEditTarget}"]:not(.course-stop-omitted)`)
+  courseEditContext.hidden = !editor
+  if (!editor) courseEditContext.remove()
+  else if (courseEditContext.parentElement !== editor) editor.append(courseEditContext)
+}
+
+for (const type of ['click', 'change', 'submit']) document.addEventListener(type, (event) => {
+  courseEditTarget = event.target.closest('#course-settings') ? 'settings'
+    : event.target.closest('#course [data-category]')?.dataset.category ?? null
+}, true)
+for (const id of ['course-context-action', 'course-edit-context-action']) byId(id).addEventListener('click', (event) => {
+  focusSection(byId(event.currentTarget.getAttribute('aria-controls')))
+})
+
 function showStorageRecovery(kind) {
   const recovery = byId('storage-recovery')
   recovery.hidden = false
@@ -495,6 +539,7 @@ function showStorageRecovery(kind) {
   if (notice.textContent !== message) notice.textContent = message
   byId('retry-course-storage').textContent = kind === 'read' ? editedUnread ? '현재 편집 대신 저장본 열기' : '저장본 다시 불러오기'
     : kind === 'metadata' ? '저장 목록 다시 갱신' : '현재 코스 저장 다시 시도'
+  updateCourseContext()
 }
 
 function editedCourseIds() {
@@ -677,12 +722,15 @@ function saveDraft(station, edited = true, saveShared = false) {
   }
   byId('updated-course-actions').hidden = true
   if (edited && !saveShared) renderSavedCourses()
+  updateCourseContext()
   return true
 }
 
 function selectStation(station, centerOnMap = false, scroll = true, sharedCourse = null, useNearbyDefaults = false) {
   if (drawing) return
   byId('storage-recovery').hidden = true
+  courseEditTarget = null
+  courseEditContext.remove()
   unreadDraftContext = null
   if (selected && selected !== station) markers.get(selected.id).marker.removeAttribute('aria-current')
   selected = station
@@ -1399,6 +1447,7 @@ function refreshSharedSaveActions() {
   const courseLabel = hasChanges ? '현재 코스' : '받은 코스'
   saveShared.textContent = openLocal.hidden ? courseLabel + ' 저장' : courseLabel + '로 저장본 바꾸기'
   if (moveFocus && openLocal.hidden) saveShared.focus({ preventScroll: true })
+  updateCourseContext()
 }
 
 function renderSharedCourseChanges() {
@@ -2418,6 +2467,7 @@ byId('save-shared-course').addEventListener('click', () => {
     status.textContent = savingCurrent ? '현재 코스를 이 기기에 저장했어요.' : '받은 코스를 이 기기에 저장했어요.'
     status.focus({ preventScroll: true })
     byId('shared-course-actions').hidden = true
+    updateCourseContext()
   } else {
     status.textContent = '이 기기에 코스를 저장하지 못했어요. 코스 링크를 복사해 보관할 수 있어요.'
   }

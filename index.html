@@ -83,6 +83,10 @@
       <div class="station-summary">
         <h2 id="station-name" tabindex="-1"></h2>
         <div id="station-lines" class="station-lines"></div>
+        <div id="course-context" class="course-context" hidden>
+          <span id="course-context-text"></span>
+          <button type="button" id="course-context-action" aria-describedby="course-context-text">공유 동작 보기</button>
+        </div>
         <div id="station-line-preview" class="draw-pool" hidden>
           <p id="station-line-preview-message"></p>
           <button type="button" id="open-preview-line">노선 설정으로 이동</button>
@@ -99,6 +103,10 @@
         <p id="course-no-map" class="course-distance" hidden>선택한 장소의 좌표가 없어 코스 위치와 도보 구간을 표시할 수 없어요. 각 장소에서 네이버 지도를 열 수 있어요.</p>
       </div>
       <div id="course" class="course" aria-label="데이트 코스"></div>
+      <div id="course-edit-context" class="course-context" hidden>
+        <span id="course-edit-context-text"></span>
+        <button type="button" id="course-edit-context-action" aria-describedby="course-edit-context-text">공유 동작 보기</button>
+      </div>
       <details id="course-map-disclosure" class="course-map-disclosure" open hidden>
         <summary>지도에서 위치 보기</summary>
         <figure id="course-location" class="course-location" hidden>
