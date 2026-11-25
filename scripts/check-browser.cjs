@@ -148,6 +148,31 @@ async function checkUnsubmittedPlace(browser) {
   } finally { await context.close() }
 }
 
+async function checkCandidateComparison(browser) {
+  const context = await browser.newContext({ viewport: { width: 320, height: 844 }, reducedMotion: 'reduce' })
+  try {
+    const page = await context.newPage()
+    await page.goto(new URL('?course=0208', home).href)
+    const card = page.locator('[data-category="activity"]')
+    const picker = card.locator('.candidate-picker')
+    const summary = picker.locator('summary')
+    const names = await picker.locator('li button strong').allTextContents()
+    const position = await summary.evaluate(n => n.getBoundingClientRect().top - n.closest('.course-stop').getBoundingClientRect().top)
+    for (const index of [2, 1, 0]) {
+      await summary.click()
+      await picker.locator('li button').nth(index).click()
+      if (index !== 2) await card.locator('img').evaluate(img => img.decode())
+      assert.equal(await card.locator('div[aria-live] > strong').innerText(), names[index])
+      assert.equal(await picker.locator('button[aria-pressed="true"] strong').textContent(), names[index])
+      assert.equal(await card.locator('img').count(), index === 2 ? 0 : 1)
+      assert.ok(await summary.evaluate(n => n === document.activeElement))
+      assert.ok(Math.abs(await summary.evaluate(n => n.getBoundingClientRect().top - n.closest('.course-stop').getBoundingClientRect().top) - position) < 1,
+        'Candidate entry stays anchored to its card when photos appear/disappear')
+    }
+    console.log('Passed: compare photo/no-photo candidates and return to the original with a stable entry and focus')
+  } finally { await context.close() }
+}
+
 async function main() {
   const browser = await chromium.launch({ channel: 'chrome', args: ['--host-resolver-rules=MAP tile.openstreetmap.org ~NOTFOUND, MAP oapi.map.naver.com ~NOTFOUND'] })
   try {
@@ -1683,6 +1708,7 @@ async function main() {
     assert.deepEqual(errors, [])
     await checkSharedNavigation(browser)
     await checkUnsubmittedPlace(browser)
+    await checkCandidateComparison(browser)
     console.log('Passed: draw animation, station and distance filters, touch map, course editing, reload, and sharing')
   } finally {
     await browser.close()

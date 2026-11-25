@@ -122,12 +122,12 @@ footer { padding: 15px 0 23px; }
 .course-stop h3 { margin: 0; font-size: 12px; color: var(--muted); }
 .course-stop p { font-size: 13px; margin-top: 3px; color: var(--muted); }
 .course-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: auto; }
-.course-actions a, .course-actions button {
+.course-actions a, .course-actions button, .candidate-picker :is(a, button) {
   padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px;
   background: #fffefa; font-size: 12px; text-decoration: none;
 }
 @media (pointer: coarse) {
-  .course-actions a, .course-actions button,
+  .course-actions a, .course-actions button, .candidate-picker :is(a, button),
   .course-tools button, .course-tools summary,
   .shared-course-actions button,
   .ticket-actions button, .ticket-header button,
@@ -636,7 +636,7 @@ footer { padding: 15px 0 23px; }
 .course-page .course-stop [aria-live] > strong + p { margin-top: 8px; line-height: 1.55; }
 .course-page .course-actions { padding-top: 8px; border-top: 1px solid color-mix(in srgb, var(--card-accent), transparent 78%); }
 .course-page .course-actions > a:first-of-type { color: var(--card-accent); border-color: var(--card-accent); font-weight: 700; }
-.course-page .course-actions .candidate-picker summary { color: var(--card-accent); }
+.course-page .candidate-picker summary { color: var(--card-accent); }
 .course-page .course-overview { padding-block: 2px; }
 @media (max-width: 850px) and (min-width: 681px) {
   .course-page .course-stop { padding: 9px; }

@@ -1191,6 +1191,7 @@ function renderCourse(station, queryPrefix, sharedCourse) {
     })
     let restorePlace = () => {}
     let closeCandidates = () => {}
+    let candidatePicker = null
     const sharedReplacement = document.createElement('span')
     if (!candidates.length) {
       const filteredOut = allCandidates.length > 0 && Boolean(courseRadius.value)
@@ -1393,7 +1394,8 @@ function renderCourse(station, queryPrefix, sharedCourse) {
           else summary.focus()
         })
         picker.append(summary, keyboardHint, options)
-        actions.append(picker)
+        if (byId('result').classList.contains('course-page')) candidatePicker = picker
+        else actions.append(picker)
       }
       restorePlace = showPlace
     }
@@ -1475,6 +1477,7 @@ function renderCourse(station, queryPrefix, sharedCourse) {
       item.classList.toggle('course-stop-omitted', omitted)
       content.hidden = omitted
       actions.hidden = omitted
+      if (candidatePicker) candidatePicker.hidden = omitted
       if (omitted) {
         backToMap.hidden = true
         delete backToMap.dataset.changed
@@ -1503,7 +1506,7 @@ function renderCourse(station, queryPrefix, sharedCourse) {
     const header = document.createElement('div')
     header.className = 'course-stop-header'
     header.append(number, title, toggle)
-    item.append(header, art, content, actions)
+    item.append(header, ...(candidatePicker ? [candidatePicker] : []), art, content, actions)
     return item
   }))
   for (const [selector, open] of returnDisclosures) {
