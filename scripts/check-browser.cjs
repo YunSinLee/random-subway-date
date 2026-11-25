@@ -169,6 +169,13 @@ async function checkCandidateComparison(browser) {
       assert.ok(identity.y >= 0 && identity.y + identity.height <= 568, 'Selected identity stays readable in the short viewport after comparison')
       if (index !== 2) assert.ok(identity.y + identity.height <= (await card.locator('img').boundingBox()).y,
         'Selected identity precedes the decoded photograph')
+      const map = card.getByRole('link', { name: names[index] + ' 네이버 지도에서 보기', exact: true })
+      assert.equal(await map.count(), 1)
+      assert.ok(decodeURIComponent(await map.getAttribute('href')).includes(names[index]))
+      assert.equal(await map.getAttribute('target'), '_blank')
+      assert.match(await map.getAttribute('rel'), /noopener/)
+      if (index !== 2) assert.ok((await map.boundingBox()).y + (await map.boundingBox()).height <= (await card.locator('img').boundingBox()).y,
+        'The current place map action precedes its photograph')
       assert.ok(await summary.evaluate(n => n === document.activeElement))
       assert.ok(Math.abs(await summary.evaluate(n => n.getBoundingClientRect().top - n.closest('.course-stop').getBoundingClientRect().top) - position) < 1,
         'Candidate entry stays anchored to its card when photos appear/disappear')

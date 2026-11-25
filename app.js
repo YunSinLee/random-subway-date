@@ -1193,6 +1193,7 @@ function renderCourse(station, queryPrefix, sharedCourse) {
     let restorePlace = () => {}
     let closeCandidates = () => {}
     let candidatePicker = null
+    let placeMapActions = null
     const sharedReplacement = document.createElement('span')
     if (!candidates.length) {
       const filteredOut = allCandidates.length > 0 && Boolean(courseRadius.value)
@@ -1294,7 +1295,12 @@ function renderCourse(station, queryPrefix, sharedCourse) {
           actions.append(showMore)
         }
       }
-      actions.append(link, guide)
+      if (byId('result').classList.contains('course-page')) {
+        placeMapActions = document.createElement('div')
+        placeMapActions.className = 'course-actions course-place-map'
+        placeMapActions.append(link)
+      } else actions.append(link)
+      actions.append(guide)
       if (candidates.length > 1) {
         const picker = document.createElement('details')
         picker.className = 'candidate-picker'
@@ -1494,6 +1500,7 @@ function renderCourse(station, queryPrefix, sharedCourse) {
       item.classList.toggle('course-stop-omitted', omitted)
       content.hidden = omitted
       actions.hidden = omitted
+      if (placeMapActions) placeMapActions.hidden = omitted
       if (candidatePicker) candidatePicker.hidden = omitted
       if (omitted) {
         backToMap.hidden = true
@@ -1523,7 +1530,7 @@ function renderCourse(station, queryPrefix, sharedCourse) {
     const header = document.createElement('div')
     header.className = 'course-stop-header'
     header.append(number, title, toggle)
-    item.append(header, ...(candidatePicker ? [candidatePicker] : []), content, art, actions)
+    item.append(header, ...(candidatePicker ? [candidatePicker] : []), content, ...(placeMapActions ? [placeMapActions] : []), art, actions)
     return item
   }))
   for (const [selector, open] of returnDisclosures) {

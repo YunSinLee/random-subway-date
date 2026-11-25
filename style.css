@@ -638,6 +638,7 @@ footer { padding: 15px 0 23px; }
 }
 .course-page .course-stop [aria-live] > strong + p { margin-top: 8px; line-height: 1.55; }
 .course-page .course-actions { padding-top: 8px; border-top: 1px solid color-mix(in srgb, var(--card-accent), transparent 78%); }
+.course-page .course-place-map { margin-top: 0; padding-top: 0; border-top: 0; }
 .course-page .course-actions > a:first-of-type { color: var(--card-accent); border-color: var(--card-accent); font-weight: 700; }
 .course-page .candidate-picker summary { color: var(--card-accent); }
 .course-page .course-overview { padding-block: 2px; }
