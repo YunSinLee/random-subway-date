@@ -322,11 +322,14 @@ footer { padding: 15px 0 23px; }
   padding: 7px 9px; color: inherit; font: inherit; border: 1px solid var(--border);
   border-radius: 6px; background: #fffefa;
 }
-#shortest-order, #undo-shortest-order, #show-course-location {
+#shortest-order, #undo-shortest-order, #show-course-location, #back-to-course-list {
   padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px;
   color: var(--green); background: #fffefa;
 }
-#shortest-order:hover, #undo-shortest-order:hover, #show-course-location:hover { background: #eef0e6; }
+#shortest-order:hover, #undo-shortest-order:hover, #show-course-location:hover, #back-to-course-list:hover { background: #eef0e6; }
+.station-summary #show-course-location { min-height: 44px; margin-top: 10px; }
+#back-to-course-list { min-height: 44px; margin-top: 8px; }
+#course-location-title { scroll-margin-top: 16px; }
 .manual-copy { flex: 1 0 100%; display: grid; gap: 6px; font-size: 13px; }
 .manual-copy-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .manual-copy textarea {
@@ -588,7 +591,7 @@ footer { padding: 15px 0 23px; }
 #close-map-place { position: absolute; right: 4px; top: 4px; justify-content: center; min-width: 36px; font-size: 22px; }
 #naver-course-map { isolation: isolate; }
 
-.course-map-disclosure { flex: 1 0 100%; border-block: 1px solid var(--border); }
+.course-map-disclosure { flex: 1 0 100%; min-width: 0; border-block: 1px solid var(--border); }
 .course-map-disclosure > summary { color: var(--green); cursor: pointer; font-weight: 700; padding: 12px 2px; }
 .course-map-disclosure .course-location { padding-block: 0 12px; border: 0; }
 .course-map-disclosure[open] #course-location-title { margin-top: 4px; }

@@ -1436,11 +1436,11 @@ undoShortestOrder.addEventListener('click', () => {
   byId('course-order-status').textContent = `이전 방문 순서로 돌아왔어요. ${courseOrder.selectedOptions[0].textContent}`
 })
 
-function focusSection(element) {
+function focusSection(element, block = 'center') {
   if (drawSettings.contains(element) && !drawSettings.open) drawSettings.showModal()
   if (courseMapDisclosure.contains(element)) courseMapDisclosure.open = true
   element.focus({ preventScroll: true })
-  element.scrollIntoView({ block: 'center' })
+  element.scrollIntoView({ block })
 }
 
 byId('open-course-directions').addEventListener('click', () => {
@@ -1448,7 +1448,8 @@ byId('open-course-directions').addEventListener('click', () => {
   directions.open = true
   focusSection(byId('course-walk-summary'))
 })
-byId('show-course-location').addEventListener('click', () => focusSection(byId('course-location-title')))
+byId('show-course-location').addEventListener('click', () => focusSection(byId('course-location-title'), 'start'))
+byId('back-to-course-list').addEventListener('click', () => focusSection(byId('show-course-location')))
 byId('open-preview-line').addEventListener('click', () => {
   const input = filterInputs.get(previewFor(selected)) ??
     byId(byId('nearby-course').checked ? 'nearby-course' : 'complete-course')
