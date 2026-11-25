@@ -169,7 +169,7 @@
           <label for="course-order">방문 순서</label>
           <select id="course-order"></select>
           <label for="course-radius">후보 거리</label>
-          <select id="course-radius" aria-describedby="station-stats">
+          <select id="course-radius" aria-describedby="course-radius-note course-radius-exceptions">
             <option value="">전체 거리</option>
             <option value="300">직선 300m 이내</option>
             <option value="500">직선 500m 이내</option>
@@ -181,6 +181,8 @@
           <button type="button" id="reset-course">기본 코스로 되돌리기</button>
           <span id="course-order-status" class="sr-only" role="status"></span>
         </div>
+        <p id="course-radius-note" class="course-distance">후보 거리는 역에서 잰 직선거리예요. 실제 도보 거리와 달라요.</p>
+        <p id="course-radius-exceptions" class="course-distance" hidden></p>
       </details>
       <details id="course-walk" class="course-walk" hidden>
         <summary id="course-walk-summary">구간별 도보 길찾기 (앱)</summary>

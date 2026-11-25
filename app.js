@@ -993,7 +993,7 @@ function renderCourse(station, queryPrefix, sharedCourse) {
       const nearest = filteredOut ? Math.min(...allCandidates.map(([, , , meters]) => meters)) : null
       const emptyMessage = document.createElement('p')
       emptyMessage.textContent = filteredOut
-        ? `선택한 거리 안에 후보가 없어요. 가장 가까운 후보는 역에서 ${outsideRadiusDistance(nearest, radius)}예요. 거리 조건을 해제하면 ${allCandidates.length}곳을 볼 수 있어요.`
+        ? `선택한 직선거리 조건에 맞는 후보가 없어요. 가장 가까운 후보는 역에서 ${outsideRadiusDistance(nearest, radius)}예요. 거리 조건을 해제하면 ${allCandidates.length}곳을 볼 수 있어요.`
         : '등록된 후보가 없어요. 네이버 지도에서 찾거나 장소를 직접 추가할 수 있어요.'
       content.append(emptyMessage)
       if (filteredOut) {
@@ -1047,6 +1047,9 @@ function renderCourse(station, queryPrefix, sharedCourse) {
         link.setAttribute('aria-label', place + (mapSearch ? ' 출발점' : '') + ' 네이버 지도에서 보기')
         const distance = meters === undefined ? '거리 미확인' : '역에서 ' + straightDistance(meters)
         detail.textContent = `${description} · ${access === 'transit' ? '대중교통 이동' : distance}`
+        if (meters === undefined && access !== 'transit' && courseRadius.value) {
+          detail.textContent += ` · ${radiusLabel(courseRadius.selectedOptions[0])} 이내 여부 미확인`
+        }
         addressLine.textContent = address
         addressLine.hidden = !address
         const candidate = candidates[index]
@@ -1295,6 +1298,13 @@ function renderCourse(station, queryPrefix, sharedCourse) {
     : `대중교통 이동 후보 ${transitCandidateCount}곳 포함`)
   if (outsideRadiusCount) statsParts.push(`거리 조건 밖 후보 ${outsideRadiusCount}곳 제외`)
   stats.textContent = statsParts.join(' · ')
+  const radiusExceptions = byId('course-radius-exceptions')
+  const exceptions = []
+  if (unmeasuredCount) exceptions.push('거리 미확인')
+  if (transitCandidateCount) exceptions.push('대중교통 이동')
+  radiusExceptions.hidden = !courseRadius.value || !exceptions.length
+  radiusExceptions.textContent = exceptions.length
+    ? `${exceptions.join('·')} 후보는 거리 조건으로 제외하지 않아요.` : ''
   arrangeCourseStops()
   renderCourseMap(station)
 }
