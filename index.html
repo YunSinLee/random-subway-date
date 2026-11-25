@@ -88,6 +88,11 @@
           <button type="button" id="open-preview-line">노선 설정으로 이동</button>
         </div>
         <p id="station-stats" class="station-stats" aria-live="polite"></p>
+        <div id="omitted-course-actions" hidden>
+          <button type="button" id="restore-omitted" aria-describedby="restore-omitted-note">뺀 분류 모두 다시 넣기</button>
+          <p id="restore-omitted-note" class="course-distance">기존 장소·설정을 초기화하지 않아요.</p>
+        </div>
+        <p id="course-restore-status" class="course-distance" role="status" hidden></p>
         <button type="button" id="show-course-location" aria-controls="course-map-disclosure" aria-describedby="course-map-availability" hidden>코스 위치 보기</button>
         <p id="course-map-availability" class="course-distance" hidden>좌표 없는 장소는 지도에 표시되지 않아요.</p>
         <button type="button" id="course-pending" class="course-distance" hidden></button>

@@ -322,12 +322,13 @@ footer { padding: 15px 0 23px; }
   padding: 7px 9px; color: inherit; font: inherit; border: 1px solid var(--border);
   border-radius: 6px; background: #fffefa;
 }
-#shortest-order, #undo-shortest-order, #show-course-location, #back-to-course-list {
+#shortest-order, #undo-shortest-order, #show-course-location, #back-to-course-list, #restore-omitted {
   padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px;
   color: var(--green); background: #fffefa;
 }
 #shortest-order:hover, #undo-shortest-order:hover, #show-course-location:hover, #back-to-course-list:hover { background: #eef0e6; }
 .station-summary #show-course-location { min-height: 44px; margin-top: 10px; }
+#restore-omitted { min-height: 44px; margin-top: 10px; }
 #back-to-course-list { min-height: 44px; margin-top: 8px; }
 #course-location-title { scroll-margin-top: 16px; }
 .manual-copy { flex: 1 0 100%; display: grid; gap: 6px; font-size: 13px; }

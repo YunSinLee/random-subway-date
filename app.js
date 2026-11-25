@@ -60,6 +60,7 @@ const recentDraws = []
 const drawnStations = new Set()
 const courseSelection = new Map()
 const omittedStops = new Set()
+const omissionSetters = new Map()
 const courseCategories = [
   ['activity', '놀거리', '놀거리'],
   ['food', '먹거리', '맛집'],
@@ -820,6 +821,7 @@ function renderCourse(station, queryPrefix, sharedCourse) {
   preferredPlaces.clear()
   unresolvedSharedPlaces.clear()
   omittedStops.clear()
+  omissionSetters.clear()
   const radius = sharedCourse?.get('radius')
   courseRadius.value = [...courseRadius.options].some((option) => option.value === radius) ? radius : ''
   const order = sharedCourse?.get('order')
@@ -1285,6 +1287,7 @@ function renderCourse(station, queryPrefix, sharedCourse) {
       toggle.textContent = omitted ? '추가하기' : '빼기'
       toggle.setAttribute('aria-label', category + (omitted ? ' 추가하기' : ' 빼기'))
     }
+    omissionSetters.set(key, setOmitted)
 
     toggle.addEventListener('click', () => {
       setOmitted(!omittedStops.has(key))
@@ -1557,6 +1560,9 @@ mapPlace.addEventListener('keydown', (event) => {
 
 function renderCourseMap(station) {
   closeMapPlace()
+  byId('omitted-course-actions').hidden = !omittedStops.size
+  byId('restore-omitted').textContent = `뺀 분류 모두 다시 넣기 · ${omittedStops.size}개`
+  byId('course-restore-status').hidden = true
   undoShortestOrder.hidden = true
   byId('course-order-status').textContent = ''
   const included = visitOrder().filter((key) => !omittedStops.has(key))
@@ -2278,6 +2284,21 @@ function zoom(factor, x = controls.width / 2, y = controls.height / 2) {
   fitted = false
   drawMap()
 }
+
+byId('restore-omitted').addEventListener('click', () => {
+  if (!selected) return
+  const restored = visitOrder().filter((key) => omittedStops.has(key))
+  if (!restored.length) return
+  for (const key of restored) omissionSetters.get(key)(false)
+  renderSharedCourseChanges()
+  clearShareFeedback()
+  renderCourseMap(selected)
+  saveDraft(selected)
+  const status = byId('course-restore-status')
+  status.textContent = `${restored.length}개 분류를 다시 넣었어요.`
+  status.hidden = false
+  focusCourseStop(restored[0])
+})
 
 byId('reset-course').addEventListener('click', () => {
   if (!selected || !window.confirm('이 역에서 변경한 장소와 설정을 기본값으로 되돌릴까요?')) return
