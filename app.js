@@ -1480,7 +1480,10 @@ function courseJumpButton(key, label, { needsSearch = false, fromMap = false } =
   button.type = 'button'
   button.textContent = label
   if (needsSearch) button.classList.add('course-search-stop')
-  if (fromMap) button.dataset.mapStop = key
+  if (fromMap) {
+    button.dataset.mapStop = key
+    button.setAttribute('aria-label', label + ' · 장소 카드로 이동')
+  }
   button.addEventListener('click', () => focusCourseStop(key, fromMap))
   return button
 }
@@ -1593,14 +1596,16 @@ function renderCourseMap(station) {
   }
   const locationButton = byId('show-course-location')
   locationButton.hidden = !showMap
-  locationButton.textContent = stops.length < courseSelection.size
-    ? `코스 위치 보기 · ${stops.length}/${courseSelection.size}곳`
-    : '코스 위치 보기'
+  locationButton.textContent = !stops.length ? '역 주변 지도 보기'
+    : stops.length < courseSelection.size ? `코스 위치 보기 · 장소 ${stops.length}곳 표시`
+      : '코스 위치 보기'
   byId('course-location').hidden = !showMap
   courseMapDisclosure.hidden = !showMap
   showCourseMap = null
   const distance = byId('course-distance')
   const unmapped = route.slice(1).filter(([, stop]) => stop && !hasCoordinates(stop))
+  byId('course-map-availability').hidden = !showMap || !unmapped.length
+  byId('course-map-help').hidden = !stops.length
   const missing = byId('course-map-missing')
   missing.hidden = !unmapped.length
   missing.replaceChildren()

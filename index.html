@@ -88,7 +88,8 @@
           <button type="button" id="open-preview-line">노선 설정으로 이동</button>
         </div>
         <p id="station-stats" class="station-stats" aria-live="polite"></p>
-        <button type="button" id="show-course-location" aria-controls="course-map-disclosure" hidden>코스 위치 보기</button>
+        <button type="button" id="show-course-location" aria-controls="course-map-disclosure" aria-describedby="course-map-availability" hidden>코스 위치 보기</button>
+        <p id="course-map-availability" class="course-distance" hidden>좌표 없는 장소는 지도에 표시되지 않아요.</p>
         <button type="button" id="course-pending" class="course-distance" hidden></button>
         <p id="course-no-map" class="course-distance" hidden>선택한 장소의 좌표가 없어 코스 위치와 도보 구간을 표시할 수 없어요. 각 장소에서 네이버 지도를 열 수 있어요.</p>
       </div>
@@ -114,7 +115,8 @@
             </section>
           </div>
           <button type="button" id="open-course-directions" hidden>네이버 지도에서 구간별 길찾기</button>
-          <ul id="course-map-legend"></ul>
+          <p id="course-map-help" class="course-distance" hidden>지도 번호는 장소 상세를 열고, 아래 장소 이름은 카드로 이동해요.</p>
+          <ul id="course-map-legend" aria-label="장소 카드로 이동"></ul>
           <p id="course-map-missing" class="course-distance" hidden></p>
           <button type="button" id="back-to-course-list" aria-controls="course">장소 목록으로 돌아가기</button>
         </figure>
