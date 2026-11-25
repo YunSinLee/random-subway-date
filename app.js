@@ -408,7 +408,8 @@ function refreshDrawPool() {
   const otherCount = count - Number(pool.includes(selected))
   const courseCount = byId('course-draw-count')
   courseCount.hidden = !otherCount
-  courseCount.textContent = otherCount ? `다른 후보 역 ${otherCount}곳 · 역마다 1/${otherCount}` : ''
+  const courseDrawCondition = nearbyOnly ? ' · 세 분류 직선 800m 후보' : hasPlaceCondition ? ' · 세 분류 후보' : ''
+  courseCount.textContent = otherCount ? `다음 역 후보 ${otherCount}곳${courseDrawCondition} · 역마다 1/${otherCount}` : ''
   const canRelaxPlaceCondition = hasPlaceCondition && enabledStations.some((station) =>
     station !== selected)
   const courseUnavailable = byId('course-draw-unavailable')

@@ -173,6 +173,33 @@ async function checkCandidateComparison(browser) {
   } finally { await context.close() }
 }
 
+async function checkFilterScopes(browser) {
+  const context = await browser.newContext({ viewport: { width: 320, height: 844 } })
+  try {
+    const page = await context.newPage()
+    await page.goto(new URL('?course=9024', home).href)
+    const preferences = await page.evaluate(() => localStorage.getItem('subway-date:draw-preferences'))
+    await openCourseSettings(page)
+    await page.getByLabel('후보 거리', { exact: true }).selectOption('500')
+    assert.ok(!(await page.locator('#nearby-course').isChecked()))
+    assert.equal(await page.evaluate(() => localStorage.getItem('subway-date:draw-preferences')), preferences)
+    const linesBefore = await page.locator('#lines input:checked').evaluateAll(nodes => nodes.map(n => n.getAttribute('aria-label')))
+    await page.locator('#course-open-settings').click()
+    await page.locator('#nearby-course').check()
+    assert.deepEqual(await page.locator('#lines input:checked').evaluateAll(nodes => nodes.map(n => n.getAttribute('aria-label'))), linesBefore)
+    assert.equal(await page.getByLabel('후보 거리', { exact: true }).inputValue(), '500')
+    await page.keyboard.press('Escape')
+    assert.equal(await page.locator(':focus').getAttribute('id'), 'course-open-settings')
+    assert.match(await page.locator('#course-open-settings').innerText(), /다음 역/)
+    assert.match(await page.locator('#course-draw-count').innerText(), /다음 역 후보.*세 분류 직선 800m 후보/)
+    await page.reload()
+    assert.equal(await page.getByLabel('후보 거리', { exact: true }).inputValue(), '500')
+    assert.ok(await page.locator('#nearby-course').isChecked())
+    assert.match(await page.locator('#course-draw-count').innerText(), /세 분류 직선 800m 후보/)
+    console.log('Passed: current-course radius and next-draw condition stay independent and persist with scoped feedback')
+  } finally { await context.close() }
+}
+
 async function main() {
   const browser = await chromium.launch({ channel: 'chrome', args: ['--host-resolver-rules=MAP tile.openstreetmap.org ~NOTFOUND, MAP oapi.map.naver.com ~NOTFOUND'] })
   try {
@@ -1691,7 +1718,7 @@ async function main() {
     assert.ok(await singleDraw.locator('#draw-from-course').isEnabled())
     const restoredPool = Number((await singleDraw.locator('#draw-pool').innerText()).match(/^\d+/)[0])
     assert.equal(await singleDraw.locator('#draw-from-course').getAttribute('aria-describedby'), 'course-draw-count')
-    assert.equal(await singleDraw.locator('#course-draw-count').innerText(), `다른 후보 역 ${restoredPool - 1}곳 · 역마다 1/${restoredPool - 1}`)
+    assert.equal(await singleDraw.locator('#course-draw-count').innerText(), `다음 역 후보 ${restoredPool - 1}곳 · 역마다 1/${restoredPool - 1}`)
     await closeDrawSettings(singleDraw)
     await singleDraw.locator('#draw-from-course').click()
     assert.notEqual(await singleDraw.locator('#draw-station').innerText(), '안국역')
@@ -1709,6 +1736,7 @@ async function main() {
     await checkSharedNavigation(browser)
     await checkUnsubmittedPlace(browser)
     await checkCandidateComparison(browser)
+    await checkFilterScopes(browser)
     console.log('Passed: draw animation, station and distance filters, touch map, course editing, reload, and sharing')
   } finally {
     await browser.close()

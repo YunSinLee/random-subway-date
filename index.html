@@ -29,7 +29,7 @@
           <button type="button" id="draw" class="primary" aria-describedby="draw-pool">오늘의 역 뽑기 <span aria-hidden="true">↗</span></button>
           <p id="draw-pool" class="draw-pool" aria-live="polite"></p>
           <button type="button" id="clear-place-condition" hidden>장소 후보 조건 해제</button>
-          <button type="button" id="open-settings" aria-haspopup="dialog">뽑기 설정</button>
+          <button type="button" id="open-settings" aria-haspopup="dialog">역 뽑기 설정</button>
           <span id="active-draw-condition" hidden></span>
         </div>
       </section>
@@ -78,7 +78,7 @@
     <section id="result" class="result" aria-labelledby="station-name" hidden>
       <nav class="course-navigation" aria-label="코스 페이지" hidden>
         <a href="./" id="back-to-draw">← 역 뽑기로</a>
-        <button type="button" id="course-open-settings" aria-haspopup="dialog">뽑기 설정</button>
+        <button type="button" id="course-open-settings" aria-haspopup="dialog">다음 역 뽑기 설정</button>
       </nav>
       <div class="station-summary">
         <h2 id="station-name" tabindex="-1"></h2>
@@ -187,7 +187,7 @@
         </div>
       </div>
       <details id="course-settings" class="course-settings">
-        <summary>코스 편집</summary>
+        <summary>이 코스 편집</summary>
         <div class="course-order">
           <div class="course-order-field">
             <label for="course-order">방문 순서</label>
@@ -222,11 +222,11 @@
   </main>
   <dialog id="draw-settings" class="draw-settings" aria-labelledby="draw-settings-title" aria-describedby="settings-pool">
     <form method="dialog" class="settings-header">
-      <h2 id="draw-settings-title">뽑기 설정</h2>
+      <h2 id="draw-settings-title">역 뽑기 설정</h2>
       <button type="submit" id="close-settings" autofocus>닫기</button>
     </form>
     <section aria-labelledby="place-settings-title">
-      <h3 id="place-settings-title">장소 후보 조건</h3>
+      <h3 id="place-settings-title">뽑을 역의 장소 조건</h3>
       <div class="draw-settings-options">
         <label class="draw-option"><input type="checkbox" id="complete-course"> 놀거리·먹거리·카페 기본 후보가 있는 역만</label>
         <label class="draw-option"><input type="checkbox" id="nearby-course"> 세 분류 모두 직선 800m 이내 후보가 있는 역만</label>
