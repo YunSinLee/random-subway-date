@@ -1805,7 +1805,7 @@ function renderCourseMap(station) {
   const pending = byId('course-pending')
   pending.hidden = !pendingStops.length
   pending.textContent = pendingStops.length
-    ? `장소를 고를 항목 ${pendingStops.length}개 · ${categoryLabels.get(pendingStops[0])}부터 고르기`
+    ? `후보 없는 항목 ${pendingStops.length}개 · ${categoryLabels.get(pendingStops[0])} 확인`
     : ''
   pending.onclick = pendingStops.length ? () => focusCourseStop(pendingStops[0]) : null
   const overview = byId('course-overview')
@@ -1818,7 +1818,9 @@ function renderCourseMap(station) {
     const label = document.createElement('span')
     label.className = 'course-overview-category'
     label.textContent = category
-    const destination = courseJumpButton(key, place?.name ?? category + ' 장소 고르기', { needsSearch: !place })
+    const emptyLabel = courseRadius.value && courseCandidates(station, key).length
+      ? `${category} 거리 조건 밖 · 확인` : `${category} 등록 후보 없음 · 확인`
+    const destination = courseJumpButton(key, place?.name ?? emptyLabel, { needsSearch: !place })
     const info = document.createElement('span')
     info.className = 'course-overview-distance'
     info.textContent = place?.access === 'transit' ? '대중교통 이동'

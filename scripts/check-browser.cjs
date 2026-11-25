@@ -229,6 +229,31 @@ async function checkCourseSummaryEntry(browser) {
   } finally { await context.close() }
 }
 
+async function checkUnavailableSummary(browser) {
+  const context = await browser.newContext({ viewport: { width: 320, height: 844 } })
+  try {
+    await context.route(/\/data\/(parks|markets|shops)\.js$/, route => route.fulfill({ contentType: 'application/javascript', body: 'export default {}' }))
+    await context.route('**/data/places.js', route => route.fulfill({ contentType: 'application/javascript',
+      body: 'export default {"0150":{activity:[["QA 공원","QA 주소","설명",600]],food:[["QA 식당","QA 주소","설명",100]]}}' }))
+    const page = await context.newPage()
+    await page.goto(new URL('?station=0150&view=course&radius=500', home).href)
+    const overview = page.locator('#course-overview')
+    const filtered = overview.getByRole('button', { name: '놀거리 거리 조건 밖 · 확인', exact: true })
+    assert.ok(await filtered.isVisible())
+    assert.ok(await overview.getByRole('button', { name: '카페 등록 후보 없음 · 확인', exact: true }).isVisible())
+    assert.match(await page.locator('#course-pending').innerText(), /후보 없는 항목 2개/)
+    await filtered.click()
+    assert.ok(await page.locator('[data-category="activity"] h3').evaluate(n => n === document.activeElement))
+    await page.locator('#edit-course-summary').click()
+    await page.getByLabel('후보 거리', { exact: true }).selectOption('800')
+    assert.ok(await overview.getByRole('button', { name: 'QA 공원', exact: true }).isVisible())
+    assert.match(await page.locator('#course-pending').innerText(), /후보 없는 항목 1개/)
+    await page.getByRole('button', { name: '카페 빼기', exact: true }).click()
+    assert.ok(await page.locator('#course-pending').isHidden())
+    console.log('Passed: summary distinguishes distance-filtered and unregistered candidates, navigation and recovery preserve omission meaning')
+  } finally { await context.close() }
+}
+
 async function main() {
   const browser = await chromium.launch({ channel: 'chrome', args: ['--host-resolver-rules=MAP tile.openstreetmap.org ~NOTFOUND, MAP oapi.map.naver.com ~NOTFOUND'] })
   try {
@@ -1026,7 +1051,7 @@ async function main() {
     await emptyDraw.locator('#show-all').click()
     assert.ok(await emptyDraw.locator('#course-draw-unavailable').isHidden())
     await closeDrawSettings(emptyDraw)
-    const pendingCafe = emptyDraw.locator('#course-overview').getByRole('button', { name: '카페 장소 고르기' })
+    const pendingCafe = emptyDraw.locator('#course-overview').getByRole('button', { name: '카페 등록 후보 없음 · 확인' })
     await pendingCafe.click()
     assert.equal(await emptyDraw.locator(':focus').evaluate((el) => el.matches('[data-category="cafe"] h3')), true)
     const cafe = emptyDraw.locator('[data-category="cafe"]')
@@ -1767,6 +1792,7 @@ async function main() {
     await checkCandidateComparison(browser)
     await checkFilterScopes(browser)
     await checkCourseSummaryEntry(browser)
+    await checkUnavailableSummary(browser)
     console.log('Passed: draw animation, station and distance filters, touch map, course editing, reload, and sharing')
   } finally {
     await browser.close()
