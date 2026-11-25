@@ -2,6 +2,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
 const reportCoverage = process.argv.includes('--app-coverage')
+const reportPhotos = process.argv.includes('--photo-coverage')
 const reportGaps = process.argv.includes('--coverage-gaps')
 
 function readGeneratedData(name) {
@@ -89,7 +90,7 @@ for (const name of ['parks', 'markets', 'shops']) {
 }
 const complete = [...stations.keys()].filter((id) =>
   Object.values(covered).every((ids) => ids.has(id)))
-if (!reportCoverage && !reportGaps) {
+if (!reportCoverage && !reportGaps && !reportPhotos) {
   console.log(`Passed: ${lines.size} lines, ${stations.size} stations, and all generated venue coordinates and distances`)
   console.log(`Generated venue records: ${generatedVenues.size} unique (name + address), ${associations} station links`)
   console.log(`Stations covered by generated data: activity ${covered.activity.size}, food ${covered.food.size}, cafe ${covered.cafe.size}, all three ${complete.length}`)
@@ -134,6 +135,33 @@ async function checkCuratedPlaces() {
       }
     }
   }
+  const knownVenues = new Set(generatedVenues)
+  for (const categories of Object.values(curated)) {
+    for (const entries of Object.values(categories)) {
+      for (const [name, address] of entries) knownVenues.add(JSON.stringify([name, address]))
+    }
+  }
+  const photoKeys = new Set()
+  for (const { name, address, image, placeId } of readGeneratedData('place-photos')) {
+    const key = JSON.stringify([name, address])
+    assert.ok(knownVenues.has(key), 'Photo does not match a venue: ' + key)
+    assert.ok(!photoKeys.has(key), 'Duplicate venue photo: ' + key)
+    assert.match(placeId, /^\d+$/, 'Invalid Naver Place ID for ' + name)
+    assert.match(image, /^[a-z0-9-]+\.webp$/, 'Invalid photo filename for ' + name)
+    assert.ok(fs.statSync(path.join(__dirname, '..', 'assets', 'place-photos', image)).size > 0, image)
+    photoKeys.add(key)
+  }
+  if (reportPhotos) {
+    console.log(JSON.stringify({
+      total: knownVenues.size,
+      photographed: photoKeys.size,
+      missing: [...knownVenues].filter((key) => !photoKeys.has(key)).map((key) => {
+        const [name, address] = JSON.parse(key)
+        return { name, address }
+      }),
+    }))
+    return
+  }
   const combinedComplete = [...stations.keys()].filter((id) =>
     Object.values(covered).every((ids) => ids.has(id)))
   if (reportGaps) {
@@ -164,6 +192,7 @@ async function checkCuratedPlaces() {
     ]))
     console.log(JSON.stringify({ stations: stations.size, complete: combinedComplete.length, nearby: nearbyIds.size, byLine }))
   } else {
+    console.log(`Place photos: ${photoKeys.size}/${knownVenues.size} unique venues`)
     console.log(`Passed: ${count} curated venue entries across ${Object.keys(curated).length} stations`)
     console.log(`Stations with app candidates: activity ${covered.activity.size}, food ${covered.food.size}, cafe ${covered.cafe.size}, all three ${combinedComplete.length}`)
     const coverageByLine = [...lines.values()].map((line) => {

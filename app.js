@@ -1,6 +1,8 @@
 import { createBasemap, projectStation } from './data/basemap.js'
+import { createNaverCourseMap } from './data/naver-course-map.js'
 import network from './data/network.js'
 import places from './data/places.js'
+import placePhotos from './data/place-photos.js'
 import parks from './data/parks.js'
 import markets from './data/markets.js'
 import shops from './data/shops.js'
@@ -10,6 +12,17 @@ const byId = (id) => document.getElementById(id)
 const appTitle = document.title
 const map = byId('map')
 const drawSettings = byId('draw-settings')
+const renderNaverCourseMap = createNaverCourseMap(
+  byId('naver-course-map'), byId('course-map'), byId('course-map-attribution'),
+)
+const renderCourseBasemap = createBasemap(byId('course-map-background'))
+const courseMapDisclosure = byId('course-map-disclosure')
+let showCourseMap = null
+
+courseMapDisclosure.addEventListener('toggle', () => {
+  if (courseMapDisclosure.open && !byId('result').hidden) showCourseMap?.()
+  else closeMapPlace()
+})
 const renderBasemap = createBasemap(byId('map-background'))
 const lines = new Map(network.lines.map((line) => [line.id, line]))
 const stations = new Map(network.stations.map((station) => [station.id, {
@@ -39,7 +52,7 @@ let moved = false
 const mapTouches = new Map()
 let pinch = null
 let drawing = false
-let drawAnimation = null
+let drawTimer = null
 let drawResult = null
 let drawTrigger = null
 let drawOrigin = null
@@ -115,7 +128,7 @@ for (const station of stations.values()) {
   label.textContent = station.name
   marker.append(title, circle, label)
   function openStationCourse() {
-    if (station === selected) {
+    if (station === selected && !byId('result').hidden) {
       focusSection(byId('station-name'))
       return
     }
@@ -216,7 +229,7 @@ function drawMap() {
   const { left, right, top, bottom } = networkBounds
   controls.x = limitMapCenter(controls.x, left, right, controls.width)
   controls.y = limitMapCenter(controls.y, top, bottom, controls.height)
-  renderBasemap(controls)
+  if (!byId('draw-page').hidden) renderBasemap(controls)
   const points = new Map(visible.map((station) => [station.id, screenPoint(station)]))
   for (const line of lines.values()) {
     const path = railPaths.get(line.id)
@@ -335,23 +348,6 @@ function refreshDrawPool() {
     label.classList.toggle('line-without-complete-course', matching === 0)
   }
   const count = pool.length
-  const selectedLines = [...lines.values()].filter((line) => enabled.has(line.id))
-  byId('scope-summary').textContent = enabled.size === lines.size ? '전체 노선' : `선택한 노선 ${enabled.size}개`
-  byId('scope-count').textContent = `후보 역 ${count}곳`
-  byId('machine-count').textContent = `${count} STATIONS`
-  byId('topbar-caption').textContent = `${enabled.size}개 노선 · ${count}개 역`
-  const tags = byId('scope-tags')
-  tags.replaceChildren(...selectedLines.slice(0, 4).map((line) => {
-    const item = document.createElement('li')
-    item.textContent = line.name
-    item.style.setProperty('--line', line.color)
-    return item
-  }))
-  if (selectedLines.length > 4) {
-    const more = document.createElement('li')
-    more.textContent = `+${selectedLines.length - 4}`
-    tags.append(more)
-  }
   const preview = lines.get(previewFor(selected))
   const previewNotice = byId('station-line-preview')
   const excludedByPlaces = selected && !preview && !pool.includes(selected)
@@ -413,7 +409,6 @@ function refreshDrawPool() {
     : count ? '' : message
   byId('clear-place-condition').hidden = Boolean(count) || !enabled.size || !hasPlaceCondition
   byId('draw').disabled = drawing || !count
-  if (byId('draw').disabled) cancelLevers()
   byId('draw-from-course').disabled = drawing || !count || onlyCurrent
   byId('open-draw-filters').dataset.target = enabled.size && (!count || (onlyCurrent && canRelaxPlaceCondition))
     ? placeConditionId
@@ -640,6 +635,7 @@ function selectStation(station, centerOnMap = false, scroll = true, sharedCourse
   selected = station
   markers.get(station.id).marker.setAttribute('aria-current', 'true')
   byId('course-walk').open = false
+  courseMapDisclosure.open = !byId('result').classList.contains('course-page')
   viewingSharedCourse = Boolean(sharedCourse)
   for (const button of byId('saved-course-list').querySelectorAll('button')) {
     if (!sharedCourse && button.dataset.stationId === station.id) button.setAttribute('aria-current', 'true')
@@ -755,6 +751,27 @@ function placeKey([name, address]) {
   return JSON.stringify([name, address])
 }
 
+const venuePhotos = new Map(placePhotos.map((photo) => [placeKey([photo.name, photo.address]), photo]))
+
+function showCourseCardPhoto(art, candidate) {
+  art.replaceChildren()
+  if (!byId('result').classList.contains('course-page')) return
+  const photo = venuePhotos.get(placeKey(candidate))
+  if (!photo) return
+  const image = document.createElement('img')
+  image.src = './assets/place-photos/' + photo.image
+  image.alt = photo.name + ' 사진'
+  image.loading = 'lazy'
+  image.decoding = 'async'
+  const credit = externalMapLink('사진 출처 · 네이버 지도', `https://map.naver.com/p/entry/place/${photo.placeId}`)
+  credit.setAttribute('aria-label', photo.name + ' 사진 출처 · 네이버 지도')
+  image.addEventListener('error', () => {
+    image.remove()
+    credit.remove()
+  }, { once: true })
+  art.append(image, credit)
+}
+
 function candidateMapQuery([name, address, , , , , mapSearch], stationQuery) {
   return mapSearch ?? name + ' ' + (address || stationQuery)
 }
@@ -811,6 +828,11 @@ function renderCourse(station, queryPrefix, sharedCourse) {
     const item = document.createElement('section')
     item.className = 'course-stop'
     item.dataset.category = key
+    const art = document.createElement('div')
+    art.className = 'course-card-art'
+    const number = document.createElement('span')
+    number.className = 'course-card-step'
+    number.setAttribute('aria-hidden', 'true')
     const title = document.createElement('h3')
     function changeRadius(value, showCandidates = false) {
       const previousRadius = Number(courseRadius.value)
@@ -1022,6 +1044,7 @@ function renderCourse(station, queryPrefix, sharedCourse) {
         addressLine.textContent = address
         addressLine.hidden = !address
         const candidate = candidates[index]
+        showCourseCardPhoto(art, candidate)
         title.textContent = candidate === custom || isCurated ? category : category + ' · 가까운 후보'
         source.hidden = candidate === custom
         source.textContent = candidateSource(candidate)
@@ -1222,6 +1245,7 @@ function renderCourse(station, queryPrefix, sharedCourse) {
     toggle.type = 'button'
     toggle.className = 'course-toggle'
     function setOmitted(omitted) {
+      item.classList.toggle('course-stop-omitted', omitted)
       content.hidden = omitted
       actions.hidden = omitted
       if (omitted) {
@@ -1247,8 +1271,8 @@ function renderCourse(station, queryPrefix, sharedCourse) {
     setOmitted(sharedCourse?.get(key) === 'omit')
     const header = document.createElement('div')
     header.className = 'course-stop-header'
-    header.append(title, toggle)
-    item.append(header, content, actions)
+    header.append(number, title, toggle)
+    item.append(header, art, content, actions)
     return item
   }))
   const stats = byId('station-stats')
@@ -1408,10 +1432,16 @@ undoShortestOrder.addEventListener('click', () => {
 
 function focusSection(element) {
   if (drawSettings.contains(element) && !drawSettings.open) drawSettings.showModal()
+  if (courseMapDisclosure.contains(element)) courseMapDisclosure.open = true
   element.focus({ preventScroll: true })
   element.scrollIntoView({ block: 'center' })
 }
 
+byId('open-course-directions').addEventListener('click', () => {
+  const directions = byId('course-walk')
+  directions.open = true
+  focusSection(byId('course-walk-summary'))
+})
 byId('show-course-location').addEventListener('click', () => focusSection(byId('course-location-title')))
 byId('open-preview-line').addEventListener('click', () => {
   const input = filterInputs.get(previewFor(selected)) ??
@@ -1438,10 +1468,59 @@ function courseJumpButton(key, label, { needsSearch = false, fromMap = false } =
   return button
 }
 
+const mapPlace = byId('map-place')
+let activeMapStop = null
+
+function closeMapPlace(restoreFocus = false) {
+  if (restoreFocus && activeMapStop) {
+    byId('course-map-legend').querySelector(`[data-map-stop="${activeMapStop}"]`)?.focus({ preventScroll: true })
+  }
+  mapPlace.hidden = true
+  activeMapStop = null
+}
+
+function showMapPlace(key) {
+  const place = courseSelection.get(key)
+  if (!place) return
+  const step = visitOrder().filter((category) => !omittedStops.has(category)).indexOf(key) + 1
+  activeMapStop = key
+  const heading = byId('map-place-name')
+  heading.textContent = place.name
+  byId('map-place-category').textContent = `${step}. ${categoryLabels.get(key)}`
+  for (const field of ['address', 'description']) {
+    const detail = byId('map-place-' + field)
+    detail.textContent = place[field] ?? ''
+    detail.hidden = !detail.textContent
+  }
+  const details = document.createElement('button')
+  details.type = 'button'
+  details.textContent = '코스 상세'
+  details.addEventListener('click', () => {
+    closeMapPlace()
+    focusCourseStop(key, true)
+  })
+  byId('map-place-actions').replaceChildren(externalMapLink('네이버 지도', place.url), details)
+  mapPlace.hidden = false
+  heading.focus({ preventScroll: true })
+}
+
+byId('close-map-place').addEventListener('click', () => closeMapPlace(true))
+mapPlace.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeMapPlace(true)
+  }
+})
+
 function renderCourseMap(station) {
+  closeMapPlace()
   undoShortestOrder.hidden = true
   byId('course-order-status').textContent = ''
   const included = visitOrder().filter((key) => !omittedStops.has(key))
+  for (const card of byId('course').children) {
+    const index = included.indexOf(card.dataset.category)
+    card.querySelector('.course-card-step').textContent = index < 0 ? '' : String(index + 1)
+  }
   const route = [[null, station], ...included.map((key) => [key, courseSelection.get(key)])]
   const pendingStops = included.filter((key) => !courseSelection.has(key))
   const pending = byId('course-pending')
@@ -1484,7 +1563,9 @@ function renderCourseMap(station) {
     overview.append(row)
   }
   const stops = route.slice(1).filter(([, stop]) => hasCoordinates(stop))
-  byId('course-no-map').hidden = Boolean(stops.length) || !courseSelection.size
+  const onCoursePage = byId('result').classList.contains('course-page')
+  const showMap = onCoursePage || stops.length > 0
+  byId('course-no-map').hidden = showMap || !courseSelection.size
   const suggestion = shortestCourseOrder(station)
   const shortestOrderButton = byId('shortest-order')
   shortestOrderButton.hidden = !suggestion
@@ -1494,11 +1575,13 @@ function renderCourseMap(station) {
     shortestOrderButton.textContent = `${orderLabel} 순서 적용 · 직선 거리 ${straightDistance(suggestion.savings, '')} 단축`
   }
   const locationButton = byId('show-course-location')
-  locationButton.hidden = !stops.length
+  locationButton.hidden = !showMap
   locationButton.textContent = stops.length < courseSelection.size
     ? `코스 위치 보기 · ${stops.length}/${courseSelection.size}곳`
     : '코스 위치 보기'
-  byId('course-location').hidden = !stops.length
+  byId('course-location').hidden = !showMap
+  courseMapDisclosure.hidden = !showMap
+  showCourseMap = null
   const distance = byId('course-distance')
   const unmapped = route.slice(1).filter(([, stop]) => stop && !hasCoordinates(stop))
   const missing = byId('course-map-missing')
@@ -1512,25 +1595,33 @@ function renderCourseMap(station) {
     }
   }
 
-  const width = 280
-  const height = 150
+  const width = 560
+  const height = 340
   const points = stops.map(([key, stop]) => ({
-    x: (stop.lon - station.lon) * Math.cos(station.lat * Math.PI / 180),
-    y: station.lat - stop.lat,
+    ...projectStation(stop.lat, stop.lon),
     color: courseColors[key],
     step: included.indexOf(key) + 1,
     key,
     stop,
   }))
-  const scale = 1 / Math.max(.000025, ...points.map(({ x, y }) =>
-    Math.max(Math.abs(x) / 104, Math.abs(y) / 54)))
-  const map = byId('course-map')
-  map.setAttribute('viewBox', `0 0 ${width} ${height}`)
-  const center = { cx: width / 2, cy: height / 2 }
-  const positions = new Map([[station, center], ...points.map(({ x, y, stop }) => [
-    stop, { cx: center.cx + x * scale, cy: center.cy + y * scale },
-  ])])
+  const worldPoints = [station, ...points]
+  const bounds = stationBounds(worldPoints)
+  const x = (bounds.left + bounds.right) / 2
+  const y = (bounds.top + bounds.bottom) / 2
+  const unitsPerMeter = 880 / (111195 * Math.cos(station.lat * Math.PI / 180))
+  const scale = Math.min(
+    (width - 96) / Math.max(bounds.right - bounds.left, 450 * unitsPerMeter),
+    (height - 104) / Math.max(bounds.bottom - bounds.top, 300 * unitsPerMeter),
+  )
+  byId('course-map').setAttribute('viewBox', `0 0 ${width} ${height}`)
+  const map = byId('course-map-overlay')
+  const positions = new Map(worldPoints.map((point) => [
+    point.stop ?? point,
+    { cx: width / 2 + (point.x - x) * scale, cy: height / 2 + (point.y - y) * scale },
+  ]))
+  const center = positions.get(station)
   const segments = []
+  const connections = []
   const walkLinks = []
   let transitSegments = 0
   let total = 0
@@ -1571,9 +1662,10 @@ function renderCourseMap(station) {
     }
     const a = positions.get(start)
     const b = positions.get(end)
+    connections.push([start, end])
     segments.push(svg('line', {
       x1: a.cx, y1: a.cy, x2: b.cx, y2: b.cy,
-      stroke: '#68756b', 'stroke-width': 2, 'stroke-dasharray': '3 4',
+      class: 'course-map-segment',
     }))
     const segmentDistance = distanceBetween(start, end)
     total += segmentDistance
@@ -1588,6 +1680,7 @@ function renderCourseMap(station) {
   byId('course-walk-links').replaceChildren(...walkLinks)
   byId('course-walk').hidden = !stops.length && !transitSegments
   if (byId('course-walk').hidden) byId('course-walk').open = false
+  byId('open-course-directions').hidden = !onCoursePage || byId('course-walk').hidden
   byId('course-walk-summary').textContent =
     transitSegments
       ? `구간별 길찾기 · 도보 ${segments.length}구간 · 대중교통 확인 ${transitSegments}구간`
@@ -1598,17 +1691,35 @@ function renderCourseMap(station) {
   distance.textContent = segments.length
     ? `${distanceLabel} · ${straightDistance(total, '')} (${segments.length}/${segmentCount}구간)`
     : ''
-  if (!stops.length) return
-  map.replaceChildren(...segments, svg('circle', { ...center, r: 9, fill: '#242722', stroke: 'white', 'stroke-width': 2 }))
-  const targetMeters = 65 * 111195 / scale
+  if (!showMap) return
+  byId('course-map-note').textContent = segments.length ? '북쪽 ↑ · 직선으로 연결' : '북쪽 ↑'
+  if (onCoursePage) {
+    const renderFallback = () => renderCourseBasemap({ x, y, scale, width, height })
+    showCourseMap = () => {
+      if (!byId('course-map').hasAttribute('hidden')) renderFallback()
+      renderNaverCourseMap({
+        renderFallback,
+        station: { ...station, name: stationDisplayName(station) },
+        stops: points.map(({ stop, step, color, key }) => ({ place: stop, step, color, key })),
+        connections,
+        onStop: showMapPlace,
+      })
+    }
+    if (courseMapDisclosure.open) showCourseMap()
+  }
+  const stationMarker = svg('circle', { ...center, r: 14, fill: '#242722', stroke: 'white', 'stroke-width': 3 })
+  const stationLabel = svg('text', { x: center.cx, y: center.cy - 22, class: 'course-station-label' })
+  stationLabel.textContent = byId('station-name').textContent
+  map.replaceChildren(...segments, stationMarker, stationLabel)
+  const targetMeters = 70 / (unitsPerMeter * scale)
   const magnitude = 10 ** Math.floor(Math.log10(targetMeters))
   const unit = [5, 2, 1].find((value) => value * magnitude <= targetMeters) * magnitude
-  const barWidth = unit * scale / 111195
+  const barWidth = unit * unitsPerMeter * scale
   const bar = svg('path', {
-    d: `M 12 131 v 4 h ${barWidth} v -4`, class: 'course-scale-bar',
+    d: `M 16 ${height - 22} v 4 h ${barWidth} v -4`, class: 'course-scale-bar',
   })
   const scaleLabel = svg('text', {
-    x: 12 + barWidth / 2, y: 127, class: 'course-scale-label',
+    x: 16 + barWidth / 2, y: height - 28, class: 'course-scale-label',
   })
   scaleLabel.textContent = `${Number(unit.toPrecision(2))} m`
   map.append(bar, scaleLabel)
@@ -1617,12 +1728,12 @@ function renderCourseMap(station) {
   const entries = [{ color: '#242722', label: byId('station-name').textContent }]
   for (const { color, stop, step, key } of points) {
     const { cx, cy } = positions.get(stop)
-    const circle = svg('circle', { cx, cy, r: 8, fill: color, stroke: 'white', 'stroke-width': 2 })
+    const circle = svg('circle', { cx, cy, r: 15, fill: color, stroke: 'white', 'stroke-width': 3 })
     const label = svg('text', { x: cx, y: cy, class: 'course-map-step', 'aria-hidden': 'true' })
     label.textContent = step
     const marker = svg('g', { class: 'course-map-marker', 'aria-hidden': 'true' })
-    marker.append(svg('circle', { cx, cy, r: 12, fill: 'transparent' }), circle, label)
-    marker.addEventListener('click', () => focusCourseStop(key, true))
+    marker.append(svg('circle', { cx, cy, r: 21, fill: 'transparent' }), circle, label)
+    marker.addEventListener('click', () => showMapPlace(key))
     map.append(marker)
     entries.push({ color, key, marker, label: `${step}. ${stop.category} · ${stop.name}` })
   }
@@ -1714,7 +1825,7 @@ function renderStationMatches() {
       button.addEventListener('click', () => {
         stationQuery.value = ''
         renderStationMatches()
-        if (station === selected) {
+        if (station === selected && !byId('result').hidden) {
           centerStation(station)
           drawMap()
           focusSection(byId('station-name'))
@@ -1786,99 +1897,7 @@ stationSearch.addEventListener('submit', (event) => {
 
 const reveal = byId('draw-reveal')
 const motionPreference = matchMedia('(prefers-reduced-motion: reduce)')
-const leverCancels = []
-const leverVisualResets = []
-for (const lever of [byId('draw'), byId('redraw')]) {
-  const scene = lever.querySelector('.lever-scene')
-  let pointer = null
-  let allowClick = true
-  let accepted = null
-  let animation = null
-  function resetVisual() {
-    if (animation) { animation.cancel(); animation = null }
-    scene.style.removeProperty('--lever-pull')
-  }
-  function animateLever(q, pull, duration = 180) {
-    resetVisual()
-    if (motionPreference.matches || typeof scene.animate !== 'function' || typeof CSS.registerProperty !== 'function') return
-    const frames = pull
-      ? [{ '--lever-pull': q }, { '--lever-pull': 0 }]
-      : [{ '--lever-pull': q, offset: 0, easing: 'cubic-bezier(.2,.65,.35,1)' }, { '--lever-pull': 1, offset: 100 / 280, easing: 'cubic-bezier(.2,.65,.35,1)' }, { '--lever-pull': 0, offset: 1 }]
-    animation = scene.animate(frames, { duration: pull ? duration : 280, easing: pull ? 'cubic-bezier(.2,.65,.35,1)' : 'linear' })
-    animation.onfinish = () => { animation = null; scene.style.removeProperty('--lever-pull') }
-  }
-  function cancel() {
-    if (pointer) {
-      const id = pointer.id
-      pointer = null
-      allowClick = false
-      if (lever.hasPointerCapture(id)) lever.releasePointerCapture(id)
-    }
-    accepted = null
-    resetVisual()
-  }
-  leverCancels.push(cancel)
-  leverVisualResets.push(resetVisual)
-  lever.addEventListener('pointerdown', (event) => {
-    if (lever.disabled || !event.isPrimary || event.button !== 0) return
-    resetVisual()
-    accepted = null
-    pointer = { id: event.pointerId, x: event.clientX, y: event.clientY }
-    allowClick = true
-    lever.setPointerCapture(event.pointerId)
-  })
-  lever.addEventListener('pointermove', (event) => {
-    if (!pointer || pointer.id !== event.pointerId) return
-    if (!motionPreference.matches && typeof scene.animate === 'function' && typeof CSS.registerProperty === 'function') scene.style.setProperty('--lever-pull', Math.max(0, Math.min(1, (event.clientY - pointer.y) / 20)))
-  })
-  lever.addEventListener('pointerup', (event) => {
-    if (!pointer || pointer.id !== event.pointerId) return
-    const x = event.clientX - pointer.x
-    const y = event.clientY - pointer.y
-    const tap = Math.hypot(x, y) <= 6
-    const pull = y >= 12 && y > Math.abs(x)
-    const q = Math.max(0, Math.min(1, y / 20))
-    allowClick = tap || pull
-    accepted = allowClick ? { q, pull } : null
-    pointer = null
-    if (lever.disabled) { allowClick = false; accepted = null; resetVisual() }
-    else if (!allowClick) animateLever(q, true, 140)
-    else if (event.pointerType === 'touch' && pull && !tap) {
-      allowClick = false
-      lever.click()
-    }
-  })
-  for (const type of ['pointercancel', 'lostpointercapture']) {
-    lever.addEventListener(type, (event) => {
-      if (pointer && pointer.id === event.pointerId) {
-        const q = Number(getComputedStyle(scene).getPropertyValue('--lever-pull')) || 0
-        cancel()
-        animateLever(q, true, 140)
-      }
-    })
-  }
-  lever.addEventListener('click', (event) => {
-    if (event.detail && !allowClick) { event.stopImmediatePropagation(); return }
-    const input = accepted ?? { q: 0, pull: false }
-    accepted = null
-    if (lever.id === 'draw') drawStation(null, lever)
-    else {
-      drawing = false
-      byId('dismiss-draw').focus()
-      drawStation(recentDraws[0])
-    }
-    if (reveal.open && drawResult && !motionPreference.matches) {
-      byId('redraw').dispatchEvent(new CustomEvent('lever-feedback', { detail: input }))
-    }
-  }, true)
-  lever.addEventListener('lever-feedback', (event) => animateLever(event.detail.q, event.detail.pull))
-}
-function cancelLevers() { leverCancels.forEach((cancel) => cancel()) }
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') cancelLevers()
-})
 motionPreference.addEventListener('change', (event) => {
-  leverVisualResets.forEach((reset) => reset())
   if (event.matches) revealResult()
 })
 
@@ -1886,14 +1905,10 @@ function drawLine(station) {
   return lines.get(station.lines.find((id) => enabled.has(id)))
 }
 
-function showTicket(station) {
+function showTicket(station, preview = false) {
   const line = drawLine(station)
-  const name = stationDisplayName(station)
-  byId('draw-station').textContent = name
-  byId('draw-station').style.setProperty('--chars', [...name].length)
-  const neighbors = line.edges.flatMap(([a, b]) => a === station.id ? [b] : b === station.id ? [a] : [])
-  byId('draw-prev').textContent = stations.get(neighbors[0]) ? stationDisplayName(stations.get(neighbors[0])) : ''
-  byId('draw-next').textContent = stations.get(neighbors[1]) ? stationDisplayName(stations.get(neighbors[1])) : ''
+  if (!preview) reveal.style.setProperty('--draw-color', line.color)
+  byId('draw-station').textContent = stationDisplayName(station)
   byId('draw-line').textContent = line.name
 }
 
@@ -1928,9 +1943,9 @@ function refreshDrawCourseNotice(counts = courseCategories.map(([key, label]) =>
   const savedCourseNotice = byId('draw-saved-course')
   const draft = editedCourseIds().includes(drawResult.id) ? readDraft(drawResult.id) : null
   savedCourseNotice.hidden = !draft
+  byId('open-draw-result-label').textContent = savedCourseNotice.hidden ? '코스 보기' : '저장한 코스 보기'
   const resultDescription = ['draw-station', 'draw-line', 'draw-coverage']
   if (!savedCourseNotice.hidden) resultDescription.push(savedCourseNotice.id)
-  resultDescription.push('draw-confirm-hint')
   byId('open-draw-result').setAttribute('aria-describedby', resultDescription.join(' '))
   if (draft) {
     const params = new URLSearchParams(draft.course)
@@ -1953,14 +1968,9 @@ function refreshDrawCourseNotice(counts = courseCategories.map(([key, label]) =>
       if (!candidate) continue
       const item = document.createElement('li')
       const category = document.createElement('span')
-      category.className = 'draw-place-meta'
       category.textContent = label
       const name = document.createElement('strong')
       name.textContent = candidate[0]
-      const description = document.createElement('span')
-      description.className = 'draw-place-desc'
-      description.textContent = candidate[2] ? ` · ${candidate[2]}` : ''
-      category.append(description)
       item.append(category, name)
       if (candidate[8] === 'transit') {
         const access = document.createElement('small')
@@ -1972,7 +1982,7 @@ function refreshDrawCourseNotice(counts = courseCategories.map(([key, label]) =>
   }
   preview.hidden = !preview.childElementCount
   byId('draw-announcement').textContent = [
-    `${reveal.dataset.history === 'true' ? '이전에 뽑은 역' : '오늘 내릴 역'}은 ${stationDisplayName(drawResult)}입니다.`,
+    `${byId('draw-status').textContent}은 ${stationDisplayName(drawResult)}입니다.`,
     byId('draw-line').textContent,
     coverage.textContent,
     preview.hidden ? '' : [...preview.children].map((item) => [...item.children].map((part) => part.textContent).join(' ')).join(', '),
@@ -1984,7 +1994,6 @@ function refreshDrawCourseNotice(counts = courseCategories.map(([key, label]) =>
 
 function showWinner(fromHistory = false) {
   showTicket(drawResult)
-  reveal.style.setProperty('--draw-color', drawLine(drawResult).color)
   byId('draw-station').removeAttribute('aria-hidden')
   byId('draw-line').removeAttribute('aria-hidden')
   if (drawResult.lines.length > 1) {
@@ -2012,22 +2021,16 @@ function showWinner(fromHistory = false) {
       lineLabel.append(row)
     }
   }
-  reveal.dataset.history = String(fromHistory)
-  const title = byId('draw-status').children
-  title[0].textContent = fromHistory ? '이전에 뽑은 역은' : '오늘 내릴 역은'
-  title[1].textContent = `${stationDisplayName(drawResult)}!`
-  byId('draw-lead').textContent = '이 역에서 둘만의 데이트를 시작해 보세요.'
-  byId('draw-caption').textContent = '우리의 다음 데이트가 기다리고 있어요.'
+  byId('draw-status').textContent = fromHistory ? '이전에 뽑은 역' : '오늘 내릴 역'
   reveal.classList.add('landed')
   byId('open-draw-result').disabled = false
   const eligible = eligibleStations().filter((station) => station !== drawOrigin)
   const redraw = byId('redraw')
-  redraw.disabled = eligible.length < 2
+  redraw.hidden = eligible.length < 2
   const remaining = eligible.filter((station) => !drawnStations.has(station)).length
-  let redrawLabel = '다시 뽑기'
-  if (remaining === 1) redrawLabel = '남은 역 뽑기'
-  if (!remaining) redrawLabel = '새로 한 바퀴 뽑기'
-  redraw.setAttribute('aria-label', `손잡이 당겨 ${redrawLabel}`)
+  redraw.textContent = '다시 뽑기'
+  if (remaining === 1) redraw.textContent = '남은 역 뽑기'
+  if (!remaining) redraw.textContent = '새로 한 바퀴 뽑기'
   const drawRemaining = byId('draw-remaining')
   const nextRoundCount = eligible.length - 1
   const previousStation = recentDraws[0]
@@ -2077,23 +2080,15 @@ function showWinner(fromHistory = false) {
   history.hidden = !history.childElementCount
 }
 
-function clearDrawMotion() {
-  if (drawAnimation) {
-    drawAnimation.onfinish = null
-    drawAnimation.cancel()
-    drawAnimation = null
-  }
-  byId('draw-reel').querySelectorAll('.draw-preview-row').forEach((row) => row.remove())
-  reveal.classList.remove('spinning')
-  cancelLevers()
-}
-
 function revealResult() {
   if (!reveal.open || !drawResult || reveal.classList.contains('landed')) return
-  clearDrawMotion()
+  clearTimeout(drawTimer)
+  drawTimer = null
+  for (const animation of byId('draw-station').getAnimations?.() ?? []) animation.cancel()
   const skip = byId('skip-draw')
   const moveFocus = document.activeElement === skip
   skip.hidden = true
+  byId('open-draw-result').hidden = false
   drawnStations.add(drawResult)
   const previous = recentDraws.indexOf(drawResult)
   if (previous !== -1) recentDraws.splice(previous, 1)
@@ -2105,8 +2100,6 @@ function revealResult() {
 
 function drawStation(previousWinner = null, trigger = null) {
   if (drawing) return
-  clearDrawMotion()
-  for (const animation of byId('draw-reel').getAnimations?.() ?? []) animation.cancel()
   const candidates = eligibleStations()
   if (!reveal.open) drawOrigin = candidates.includes(previousWinner) ? previousWinner : null
   const eligible = candidates.filter((station) => station !== drawOrigin)
@@ -2123,6 +2116,7 @@ function drawStation(previousWinner = null, trigger = null) {
   if (trigger) drawTrigger = trigger
   refreshDrawPool()
   byId('open-draw-result').disabled = true
+  byId('open-draw-result').hidden = true
   byId('draw-announcement').textContent = ''
   byId('draw-station').setAttribute('aria-hidden', 'true')
   byId('draw-line').setAttribute('aria-hidden', 'true')
@@ -2136,56 +2130,49 @@ function drawStation(previousWinner = null, trigger = null) {
   byId('draw-origin').hidden = true
   reveal.classList.remove('landed')
   reveal.style.removeProperty('--draw-color')
-  byId('draw-status').children[0].textContent = '다음 역은…'
-  byId('draw-status').children[1].textContent = '어디일까?'
-  byId('draw-lead').textContent = '둘만의 목적지를 찾고 있어요.'
-  byId('draw-caption').textContent = '두근두근, 잠시만 기다려 주세요.'
+  byId('draw-status').textContent = '다음 역은…'
   if (!reveal.open) {
     recentDraws.length = 0
     reveal.returnValue = ''
     reveal.showModal()
   }
   byId('recent-draws').hidden = true
-  byId('redraw').disabled = true
+  byId('redraw').hidden = true
   reveal.scrollTop = 0
-  showTicket(drawResult)
-  byId('draw-line').textContent = '목적지를 찾는 중'
 
-  const reel = byId('draw-reel')
-  if (motionPreference.matches || pool.length === 1 || typeof reel.animate !== 'function') {
+  if (motionPreference.matches || pool.length === 1) {
     revealResult()
     return
   }
 
   byId('skip-draw').hidden = false
   byId('draw-announcement').textContent = '역을 뽑는 중이에요.'
-  reveal.style.setProperty('--draw-duration', '2000ms')
+  const delays = [95, 100, 110, 130, 155, 190, 250, 325, 420]
+  reveal.style.setProperty('--draw-duration', delays.reduce((total, delay) => total + delay, 0) + 'ms')
+  let frame = 0
   const previews = pool.length === 2 ? pool : pool.filter((station) => station !== drawResult)
   let lastPreview = null
   let unseenPreviews = [...previews]
-  const rows = []
-  for (let frame = 0; frame < 18; frame += 1) {
+  const stationLabel = byId('draw-station')
+  function spin() {
+    if (!reveal.open) return
+    if (frame === delays.length) {
+      revealResult()
+      return
+    }
     if (!unseenPreviews.length) unseenPreviews = [...previews]
-    const options = unseenPreviews.filter((station) => station !== lastPreview)
-    if (!options.length) unseenPreviews = previews.filter((station) => station !== lastPreview)
-    const choices = unseenPreviews.filter((station) => station !== lastPreview)
-    const choice = choices[Math.floor(Math.random() * choices.length)]
-    const index = unseenPreviews.indexOf(choice)
+    let index = Math.floor(Math.random() * unseenPreviews.length)
+    if (unseenPreviews[index] === lastPreview) index = (index + 1) % unseenPreviews.length
     lastPreview = unseenPreviews.splice(index, 1)[0]
-    const row = document.createElement('p')
-    row.className = 'draw-preview-row'
-    row.setAttribute('aria-hidden', 'true')
-    row.textContent = stationDisplayName(lastPreview)
-    row.style.setProperty('--chars', [...row.textContent].length)
-    rows.push(row)
+    showTicket(lastPreview, true)
+    stationLabel.animate?.([
+      { opacity: .58, transform: 'translateY(4px)' },
+      { opacity: 1, transform: 'translateY(0)' },
+    ], { duration: Math.min(delays[frame], 140), easing: 'ease-out' })
+    drawTimer = setTimeout(spin, delays[frame])
+    frame += 1
   }
-  reel.prepend(...rows)
-  reveal.classList.add('spinning')
-  drawAnimation = reel.animate([
-    { transform: `translateY(${-100 * 1.5 / 21}%)` },
-    { transform: `translateY(${-100 * 19.5 / 21}%)` },
-  ], { duration: 2000, easing: 'cubic-bezier(.2,.65,.35,1)', fill: 'forwards' })
-  drawAnimation.onfinish = revealResult
+  spin()
 }
 
 function nearbyCourseParams(station) {
@@ -2198,14 +2185,21 @@ function nearbyCourseParams(station) {
 }
 
 function finishDraw() {
-  clearDrawMotion()
-  for (const animation of byId('draw-reel').getAnimations?.() ?? []) animation.cancel()
+  for (const animation of byId('draw-station').getAnimations?.() ?? []) animation.cancel()
   byId('skip-draw').hidden = true
   const winner = reveal.returnValue === 'course' ? drawResult : null
+  clearTimeout(drawTimer)
+  drawTimer = null
   drawResult = null
   drawing = false
   refreshDrawPool()
   if (winner) {
+    const url = new URL(location.href)
+    url.search = ''
+    url.hash = ''
+    url.searchParams.set('course', winner.id)
+    history.pushState(null, '', url)
+    setCoursePage(true)
     selectStation(winner, true, true, null, byId('nearby-course').checked)
   }
   else drawTrigger?.focus({ preventScroll: true })
@@ -2213,6 +2207,11 @@ function finishDraw() {
   drawOrigin = null
 }
 
+byId('redraw').addEventListener('click', () => {
+  drawing = false
+  byId('dismiss-draw').focus()
+  drawStation(recentDraws[0])
+})
 byId('skip-draw').addEventListener('click', revealResult)
 byId('open-draw-result').addEventListener('click', () => reveal.close('course'))
 byId('dismiss-draw').addEventListener('click', () => reveal.close())
@@ -2282,6 +2281,7 @@ function sharedCourseUrl() {
   url.search = ''
   url.hash = ''
   url.searchParams.set('station', selected.id)
+  if (byId('result').classList.contains('course-page')) url.searchParams.set('view', 'course')
   for (const [key, value] of courseParams({ includePreferences: false, preserveUnresolved: false })) url.searchParams.set(key, value)
   return url.href
 }
@@ -2423,10 +2423,13 @@ async function copyResult(value, label, trigger) {
   }
 }
 
-byId('open-settings').addEventListener('click', () => drawSettings.showModal())
+for (const id of ['open-settings', 'course-open-settings']) {
+  byId(id).addEventListener('click', () => drawSettings.showModal())
+}
 
 byId('show-all').addEventListener('click', () => setAll(true))
 byId('hide-all').addEventListener('click', () => setAll(false))
+byId('draw').addEventListener('click', (event) => drawStation(null, event.currentTarget))
 byId('draw-from-course').addEventListener('click', (event) => drawStation(selected, event.currentTarget))
 for (const id of ['complete-course', 'nearby-course']) {
   byId(id).addEventListener('change', () => {
@@ -2449,6 +2452,7 @@ byId('center-station').addEventListener('click', () => {
 })
 byId('show-station-on-map').addEventListener('click', () => {
   if (!selected) return
+  if (byId('draw-page').hidden) returnToDraw()
   keyboardStation = selected
   centerStation(selected)
   drawMap()
@@ -2565,15 +2569,59 @@ new ResizeObserver(([entry]) => {
 }).observe(map)
 restoreDrawPreferences()
 renderSavedCourses()
-const sharedParams = new URLSearchParams(location.search)
-const linkedStation = stations.get(sharedParams.get('station'))
 refreshFilters()
-if (linkedStation) {
-  selectStation(linkedStation, true, false, sharedParams)
-} else if (sharedParams.has('station')) {
-  byId('invalid-course-link').hidden = false
-} else {
-  const draft = readDraft()
-  const draftStation = draft && stations.get(draft.station)
-  if (draftStation) selectStation(draftStation, true, false)
+
+function setCoursePage(open) {
+  closeMapPlace()
+  if (!open) renderNaverCourseMap(null)
+  byId('draw-page').hidden = open
+  byId('result').classList.toggle('course-page', open)
+  byId('station-name').setAttribute('aria-level', open ? '1' : '2')
+  byId('back-to-draw').parentElement.hidden = !open
 }
+
+function returnToDraw() {
+  const url = new URL(location.href)
+  url.search = ''
+  url.hash = ''
+  history.pushState(null, '', url)
+  setCoursePage(false)
+  document.title = appTitle
+  byId('result').hidden = true
+  window.scrollTo(0, 0)
+  byId('draw').focus({ preventScroll: true })
+}
+
+byId('back-to-draw').addEventListener('click', (event) => {
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  event.preventDefault()
+  returnToDraw()
+})
+
+function restorePage(initial = false) {
+  if (reveal.open) {
+    drawTrigger = null
+    reveal.close('')
+    drawing = false
+  }
+  const params = new URLSearchParams(location.search)
+  const localId = params.get('course')
+  const stationId = localId ?? params.get('station')
+  const linkedStation = stations.get(stationId)
+  setCoursePage(Boolean(linkedStation && (localId || params.get('view') === 'course')))
+  if (linkedStation) {
+    selectStation(linkedStation, true, !initial, localId ? null : params)
+    return
+  }
+  byId('invalid-course-link').hidden = stationId === null
+  if (initial && stationId === null) {
+    const draft = readDraft()
+    if (draft) selectStation(stations.get(draft.station), true, false)
+  } else {
+    byId('result').hidden = true
+    document.title = appTitle
+  }
+}
+
+window.addEventListener('popstate', () => restorePage())
+restorePage(true)

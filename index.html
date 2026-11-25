@@ -3,12 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="naver-maps-client-id" content="ovmlhyv6tu">
   <meta name="theme-color" content="#f7f4ed">
   <title>다음 역 데이트</title>
   <meta name="description" content="수도권 지하철에서 둘이 갈 역을 뽑고, 주변 놀거리와 식당, 카페로 데이트 코스를 만들어 보세요.">
-  <link rel="preload" href="./assets/fonts/Pretendard-Regular.subset.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="preload" href="./assets/fonts/Pretendard-Bold.subset.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="preload" href="./assets/fonts/PressStart2P-Regular.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="./style.css">
   <link rel="modulepreload" href="./data/network.js">
   <link rel="modulepreload" href="./data/shops.js">
@@ -16,113 +14,72 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><span class="brand-mark" aria-hidden="true"><img src="./assets/pixel-subway.svg" alt="" width="16" height="16"><span>↗</span></span> 다음 역 데이트</div>
-    <nav class="topbar-nav" aria-label="바로가기">
-      <a href="#draw" data-jump="draw">역 뽑기</a>
-      <a href="#map" data-jump="map">노선도</a>
-      <span id="topbar-caption" class="topbar-caption">수도권 전철</span>
-    </nav>
+    <div class="brand"><span class="brand-mark" aria-hidden="true">↗</span> 다음 역 데이트</div>
+    <span class="topbar-caption">수도권 전철</span>
   </header>
   <main>
     <noscript><p>역을 뽑고 코스를 보려면 브라우저에서 자바스크립트를 켜 주세요.</p></noscript>
-    <div id="invalid-course-link" class="invalid-course-link" hidden>
-      <p role="status">공유 링크에 있는 역을 찾을 수 없어요.</p>
-      <a href="./">홈으로 돌아가기</a>
-    </div>
-    <section class="slot-screen" aria-labelledby="title">
-      <div class="slot-copy">
-        <p class="slot-eyebrow slot-pixel" lang="en" aria-hidden="true"><i></i>TWO PEOPLE, ONE DESTINATION</p>
-        <h1 id="title" class="slot-title">오늘은<br>어디서 내릴까?</h1>
-        <p class="slot-lead"><span class="wide-only">매일 타던 지하철에서, 새로운 데이트를.<br></span>버튼 한 번으로 둘만의 목적지를 만나보세요.</p>
-      </div>
-      <div class="slot-stage">
-        <p class="stage-label slot-pixel" lang="en" aria-hidden="true"><span>PICK YOUR NEXT STOP</span><span>SEOUL METRO</span></p>
-        <div class="slot-machine">
-          <p class="slot-board slot-pixel" lang="en" aria-hidden="true"><i></i>NEXT STOP<i></i></p>
-          <div class="slot-reels">
-            <div class="slot-side" aria-hidden="true"><img src="./assets/pixel-train.svg" alt="" width="35" height="35"></div>
-            <div class="ticket-display" aria-hidden="true">
-              <p class="slot-unknown slot-pixel">? ? ?</p>
-              <p class="slot-unknown-label">오늘의 역</p>
-            </div>
-            <div class="slot-side" aria-hidden="true"><img class="slot-heart" src="./assets/pixel-heart.svg" alt="" width="35" height="31"></div>
-            <button type="button" id="draw" class="slot-lever" aria-label="손잡이 당겨 역 뽑기" aria-describedby="draw-pool draw-hint"><span class="lever-scene" aria-hidden="true"><span class="lever-mount"></span><span class="lever-arm"><span class="lever-grip"></span></span></span></button>
-          </div>
-          <p id="machine-count" class="slot-status slot-pixel" lang="en" aria-hidden="true"></p>
-          <div class="ticket-track" aria-hidden="true">
-            <i></i><i></i><i></i><i></i><i></i><i></i><span class="ticket-stop"></span>
-          </div>
-          <button type="button" class="primary" disabled>확인하기 <span aria-hidden="true">↗</span></button>
-          <p id="draw-hint" class="draw-remaining">손잡이를 아래로 당기거나 눌러 뽑으세요.</p>
+    <div id="draw-page">
+      <section class="intro" aria-labelledby="title">
+        <div>
+          <h1 id="title">오늘은 어디서 내릴까?</h1>
+          <p>노선을 골라 둘이 갈 역을 뽑아보세요.</p>
         </div>
-        <p class="stage-caption">우리의 다음 데이트, 운에 맡겨볼까요?</p>
-      </div>
-      <div class="slot-more">
-        <section class="draw-scope" aria-labelledby="scope-title">
-          <div class="scope-header">
-            <h2 id="scope-title">이번 여행의 범위</h2>
-            <span class="scope-label" aria-hidden="true">설정</span>
-          </div>
-          <div class="scope-lines">
-            <p id="scope-summary" class="scope-chip"></p>
-            <p id="scope-count" class="scope-chip"></p>
-            <ul id="scope-tags" aria-label="선택한 노선"></ul>
-          </div>
-          <p class="scope-condition">
-            <span>장소 후보 조건</span>
-            <strong id="active-draw-condition" hidden></strong><strong class="scope-none">조건 없음</strong>
-          </p>
-          <button type="button" id="open-settings" aria-haspopup="dialog">뽑기 설정<span class="wide-only"> 바꾸기</span> <span aria-hidden="true">↗</span></button>
-        </section>
         <div class="draw-entry">
+          <button type="button" id="draw" class="primary" aria-describedby="draw-pool">오늘의 역 뽑기 <span aria-hidden="true">↗</span></button>
           <p id="draw-pool" class="draw-pool" aria-live="polite"></p>
           <button type="button" id="clear-place-condition" hidden>장소 후보 조건 해제</button>
+          <button type="button" id="open-settings" aria-haspopup="dialog">뽑기 설정</button>
+          <span id="active-draw-condition" hidden></span>
         </div>
+      </section>
+      <div id="invalid-course-link" class="invalid-course-link" hidden>
+        <p role="status">공유 링크에 있는 역을 찾을 수 없어요.</p>
+        <a href="./">홈으로 돌아가기</a>
       </div>
-      <p class="map-jump">
-        <span>가고 싶은 역이 있다면</span>
-        <a href="#map" data-jump="map">노선도에서 <span class="wide-only">직접 </span>고르기 <span aria-hidden="true">↗</span></a>
-        <span class="map-jump-tag slot-pixel" lang="en" aria-hidden="true">NEXT STOP, DATE!</span>
-      </p>
-    </section>
-    <form id="station-search" class="station-search" role="search">
-      <label for="station-query">역 이름으로 찾기</label>
-      <input id="station-query" type="search" placeholder="예: 안국, 양평역 5호선" autocomplete="off">
-      <div id="station-search-results" class="station-matches" hidden>
-        <p id="station-search-status" aria-live="polite"></p>
-        <ul id="station-matches"></ul>
-      </div>
-    </form>
-    <details id="saved-courses" class="saved-courses" hidden>
-      <summary>저장한 코스</summary>
-      <ul id="saved-course-list"></ul>
-    </details>
-    <section class="workspace" aria-label="노선도 탐색">
-      <div class="map-panel">
-        <div id="map-background" class="map-background" aria-hidden="true"></div>
-        <div class="map-title"><h2>수도권 노선도</h2><p id="map-count" aria-live="polite" aria-atomic="true"></p></div>
-        <svg id="map" tabindex="0" aria-label="수도권 전철 노선도" aria-describedby="map-count map-keyboard-hint"></svg>
-        <p id="empty" class="map-empty" hidden>노선을 켜면 지도에 표시돼요.</p>
-        <div class="map-controls" role="group" aria-label="노선도 확대 및 이동">
-          <button id="zoom-in" type="button" aria-label="확대">+</button>
-          <button id="zoom-out" type="button" aria-label="축소">−</button>
-          <button id="center-station" type="button" hidden>코스 역</button>
-          <button id="fit-seoul" type="button">서울 중심 확대</button>
-          <button id="fit-selected" type="button">선택 노선 보기</button>
-          <button id="fit" type="button" aria-describedby="map-count">전체 보기</button>
+      <form id="station-search" class="station-search" role="search">
+        <label for="station-query">역 이름으로 찾기</label>
+        <input id="station-query" type="search" placeholder="예: 안국, 양평역 5호선" autocomplete="off">
+        <div id="station-search-results" class="station-matches" hidden>
+          <p id="station-search-status" aria-live="polite"></p>
+          <ul id="station-matches"></ul>
         </div>
-        <a class="map-attribution" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors</a>
-        <p id="map-keyboard-hint" class="sr-only">지도에서는 방향키로 이동하고 더하기와 빼기 키로 확대하거나 축소할 수 있어요. Tab으로 역에 초점을 옮긴 뒤 방향키로 주변 역을 찾고 Enter로 코스를 열 수 있어요.</p>
-        <p class="map-hint">
-          <span id="map-hint">
-            <span class="map-hint-pointer">드래그해서 이동 · 역을 눌러 주변 보기</span>
-            <span class="map-hint-touch">두 손가락으로 확대 · 역을 눌러 주변 보기</span>
-          </span>
-          <span id="map-filter-hint" hidden>점선 테두리 역은 장소 조건으로 뽑기 제외</span>
-        </p>
-      </div>
-    </section>
+      </form>
+      <details id="saved-courses" class="saved-courses" hidden>
+        <summary>저장한 코스</summary>
+        <ul id="saved-course-list"></ul>
+      </details>
+      <section class="workspace" aria-label="노선도 탐색">
+        <div class="map-panel">
+          <div id="map-background" class="map-background" aria-hidden="true"></div>
+          <div class="map-title"><h2>수도권 노선도</h2><p id="map-count" aria-live="polite" aria-atomic="true"></p></div>
+          <svg id="map" tabindex="0" aria-label="수도권 전철 노선도" aria-describedby="map-count map-keyboard-hint"></svg>
+          <p id="empty" class="map-empty" hidden>노선을 켜면 지도에 표시돼요.</p>
+          <div class="map-controls" role="group" aria-label="노선도 확대 및 이동">
+            <button id="zoom-in" type="button" aria-label="확대">+</button>
+            <button id="zoom-out" type="button" aria-label="축소">−</button>
+            <button id="center-station" type="button" hidden>코스 역</button>
+            <button id="fit-seoul" type="button">서울 중심 확대</button>
+            <button id="fit-selected" type="button">선택 노선 보기</button>
+            <button id="fit" type="button" aria-describedby="map-count">전체 보기</button>
+          </div>
+          <a class="map-attribution" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors</a>
+          <p id="map-keyboard-hint" class="sr-only">지도에서는 방향키로 이동하고 더하기와 빼기 키로 확대하거나 축소할 수 있어요. Tab으로 역에 초점을 옮긴 뒤 방향키로 주변 역을 찾고 Enter로 코스를 열 수 있어요.</p>
+          <p class="map-hint">
+            <span id="map-hint">
+              <span class="map-hint-pointer">드래그해서 이동 · 역을 눌러 주변 보기</span>
+              <span class="map-hint-touch">두 손가락으로 확대 · 역을 눌러 주변 보기</span>
+            </span>
+            <span id="map-filter-hint" hidden>점선 테두리 역은 장소 조건으로 뽑기 제외</span>
+          </p>
+        </div>
+      </section>
+    </div>
     <section id="result" class="result" aria-labelledby="station-name" hidden>
+      <nav class="course-navigation" aria-label="코스 페이지" hidden>
+        <a href="./" id="back-to-draw">← 역 뽑기로</a>
+        <button type="button" id="course-open-settings" aria-haspopup="dialog">뽑기 설정</button>
+      </nav>
       <div class="station-summary">
         <h2 id="station-name" tabindex="-1"></h2>
         <div id="station-lines" class="station-lines"></div>
@@ -131,10 +88,36 @@
           <button type="button" id="open-preview-line">노선 설정으로 이동</button>
         </div>
         <p id="station-stats" class="station-stats" aria-live="polite"></p>
-        <div id="course-overview" class="course-overview"></div>
         <button type="button" id="course-pending" class="course-distance" hidden></button>
         <p id="course-no-map" class="course-distance" hidden>선택한 장소의 좌표가 없어 코스 위치와 도보 구간을 표시할 수 없어요. 각 장소에서 네이버 지도를 열 수 있어요.</p>
       </div>
+      <div id="course" class="course" aria-label="데이트 코스"></div>
+      <details id="course-map-disclosure" class="course-map-disclosure" open hidden>
+        <summary>지도에서 위치 보기</summary>
+        <figure id="course-location" class="course-location" hidden>
+          <figcaption id="course-location-title" tabindex="-1">역 주변 지도 <span id="course-map-note">북쪽 ↑</span></figcaption>
+          <div class="course-map-surface">
+            <svg id="course-map" role="img" aria-label="역과 선택한 장소의 위치">
+              <g id="course-map-background" aria-hidden="true"></g>
+              <g id="course-map-overlay"></g>
+            </svg>
+            <div id="naver-course-map" role="region" aria-label="네이버 지도 · 역과 선택한 장소" hidden></div>
+            <a id="course-map-attribution" class="map-attribution" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors</a>
+            <section id="map-place" class="map-place" aria-labelledby="map-place-name" hidden>
+              <button type="button" id="close-map-place" aria-label="지도 장소 정보 닫기">×</button>
+              <p id="map-place-category"></p>
+              <h3 id="map-place-name" tabindex="-1"></h3>
+              <p id="map-place-address"></p>
+              <p id="map-place-description"></p>
+              <div id="map-place-actions"></div>
+            </section>
+          </div>
+          <button type="button" id="open-course-directions" hidden>네이버 지도에서 구간별 길찾기</button>
+          <ul id="course-map-legend"></ul>
+          <p id="course-map-missing" class="course-distance" hidden></p>
+        </figure>
+      </details>
+      <div id="course-overview" class="course-overview"></div>
       <div class="result-actions">
         <button type="button" id="share-course-primary">코스 공유</button>
         <button type="button" id="show-station-on-map">노선도에서 역 보기</button>
@@ -198,13 +181,6 @@
           <span id="course-order-status" class="sr-only" role="status"></span>
         </div>
       </details>
-      <div id="course" class="course" aria-label="데이트 코스"></div>
-      <figure id="course-location" class="course-location" hidden>
-        <figcaption id="course-location-title" tabindex="-1">역과 장소 위치 <span>북쪽 ↑ · 좌표 기준</span></figcaption>
-        <svg id="course-map" role="img" aria-label="역과 선택한 장소의 상대 위치"></svg>
-        <ul id="course-map-legend"></ul>
-        <p id="course-map-missing" class="course-distance" hidden></p>
-      </figure>
       <details id="course-walk" class="course-walk" hidden>
         <summary id="course-walk-summary">구간별 도보 길찾기 (앱)</summary>
         <ol id="course-walk-links"></ol>
@@ -242,63 +218,31 @@
   <dialog id="draw-reveal" class="draw-reveal" aria-labelledby="draw-status">
     <div class="draw-ticket">
       <div class="ticket-header">
-        <div class="brand" aria-hidden="true"><span class="brand-mark"><img src="./assets/pixel-subway.svg" alt="" width="16" height="16"><span>↗</span></span> 다음 역 데이트</div>
+        <h2 id="draw-status">다음 역은…</h2>
         <button type="button" id="dismiss-draw" autofocus aria-label="뽑기 닫기">×</button>
       </div>
-      <div class="slot-screen">
-        <div class="slot-copy">
-          <p class="slot-eyebrow slot-pixel" lang="en" aria-hidden="true"><i></i><span class="when-spinning">FINDING YOUR STATION</span><span class="when-landed">YOUR LUCKY STATION</span></p>
-          <h2 id="draw-status" class="slot-title"><span>다음 역은…</span> <span>어디일까?</span></h2>
-          <p id="draw-lead" class="slot-lead"></p>
-        </div>
-        <div class="slot-stage">
-          <p class="stage-label slot-pixel" lang="en" aria-hidden="true"><span><span class="when-spinning">PICK YOUR NEXT STOP</span><span class="when-landed">WE HAVE ARRIVED!</span></span><span>SEOUL METRO</span></p>
-          <div class="slot-machine">
-            <p class="slot-board slot-pixel" lang="en" aria-hidden="true"><i></i><span class="when-spinning">NEXT STOP</span><span class="when-landed">JACKPOT!</span><i></i></p>
-            <div class="slot-reels">
-              <div class="slot-side" aria-hidden="true"><img src="./assets/pixel-train.svg" alt="" width="35" height="35"></div>
-              <div class="ticket-display">
-                <div id="draw-reel" class="slot-names">
-                  <p id="draw-prev" aria-hidden="true"></p>
-                  <p id="draw-station" aria-hidden="true"></p>
-                  <p id="draw-next" aria-hidden="true"></p>
-                </div>
-              </div>
-              <div class="slot-side" aria-hidden="true"><img class="slot-heart" src="./assets/pixel-heart.svg" alt="" width="35" height="31"></div>
-              <button type="button" id="redraw" class="slot-lever" aria-label="손잡이 당겨 다시 뽑기" aria-describedby="draw-remaining redraw-hint" disabled><span class="lever-scene" aria-hidden="true"><span class="lever-mount"></span><span class="lever-arm"><span class="lever-grip"></span></span></span></button>
-            </div>
-            <p id="draw-line" class="slot-status" aria-hidden="true"></p>
-            <div class="ticket-track" aria-hidden="true">
-              <i></i><i></i><i></i><i></i><i></i><i></i><span class="ticket-stop"></span>
-              <span class="ticket-train"></span>
-              <span class="ticket-arrival"></span>
-            </div>
-            <div id="draw-map-search" hidden></div>
-            <div class="ticket-actions">
-              <div class="ticket-secondary"><button type="button" id="skip-draw" hidden>결과 바로 보기</button></div>
-              <button type="button" id="open-draw-result" class="primary" aria-describedby="draw-station draw-line draw-coverage draw-confirm-hint" disabled>확인하기 <span aria-hidden="true">↗</span></button>
-            </div>
-          </div>
-          <p id="draw-caption" class="stage-caption" aria-hidden="true"></p>
-        </div>
-        <div class="slot-more">
-          <p id="draw-confirm-hint" class="draw-remaining">확인하면 뽑힌 역의 코스를 열어요.</p>
-          <div class="slot-preview">
-            <div class="preview-header">
-              <h3>여기서 이런 데이트 어때요?</h3>
-              <span>코스 예시</span>
-            </div>
-            <ul id="draw-places" class="draw-places" aria-label="추천 장소" hidden></ul>
-            <p id="draw-coverage" hidden></p>
-            <p id="draw-saved-course" class="draw-remaining" hidden></p>
-          </div>
-          <p id="redraw-hint" class="draw-remaining">손잡이를 아래로 당기거나 눌러 뽑으세요.</p>
-          <div id="recent-draws" class="recent-draws" hidden aria-label="이번에 뽑은 다른 역"></div>
-          <p id="draw-remaining" class="draw-remaining" hidden></p>
-          <p id="draw-origin" class="draw-remaining" hidden></p>
-        </div>
+      <div class="ticket-display">
+        <p id="draw-station" aria-hidden="true"></p>
+        <p id="draw-line" aria-hidden="true"></p>
+        <p id="draw-coverage" hidden></p>
+        <ul id="draw-places" class="draw-places" aria-label="추천 장소" hidden></ul>
+        <div id="draw-map-search" hidden></div>
+        <p id="draw-saved-course" class="draw-remaining" hidden></p>
+        <p id="draw-remaining" class="draw-remaining" hidden></p>
+        <p id="draw-origin" class="draw-remaining" hidden></p>
+      </div>
+      <div class="ticket-track" aria-hidden="true">
+        <span class="ticket-train"><span></span></span>
+        <span class="ticket-stop"></span>
+        <span class="ticket-arrival"></span>
       </div>
       <p id="draw-announcement" class="sr-only" aria-live="polite"></p>
+      <div id="recent-draws" class="recent-draws" hidden aria-label="이번에 뽑은 다른 역"></div>
+      <div class="ticket-actions">
+        <button type="button" id="skip-draw" class="primary" hidden>결과 바로 보기</button>
+        <button type="button" id="open-draw-result" class="primary" aria-describedby="draw-station draw-line draw-coverage"><span id="open-draw-result-label">코스 보기</span> <span aria-hidden="true">↗</span></button>
+        <button type="button" id="redraw" aria-describedby="draw-remaining" hidden>다시 뽑기</button>
+      </div>
     </div>
   </dialog>
   <footer>
