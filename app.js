@@ -12,6 +12,8 @@ const byId = (id) => document.getElementById(id)
 const appTitle = document.title
 const courseEditContext = byId('course-edit-context')
 let courseEditTarget = null
+let lastCourseEditor = null
+let courseActionReturn = null
 const map = byId('map')
 const drawSettings = byId('draw-settings')
 const renderNaverCourseMap = createNaverCourseMap(
@@ -504,6 +506,9 @@ function updateCourseContext() {
     target = 'save-shared-course'
   }
   if (customFormDrafts.size) text += ' · 입력 중인 장소는 미저장'
+  const returnButton = byId('return-to-course-editor')
+  returnButton.hidden = !courseActionReturn || courseActionReturn.station !== selected.id
+  if (!returnButton.hidden) byId(target).after(returnButton)
   for (const row of [summary, courseEditContext]) {
     row.querySelector('span').textContent = text
     const button = row.querySelector('button')
@@ -521,8 +526,55 @@ for (const type of ['click', 'change', 'submit']) document.addEventListener(type
   courseEditTarget = event.target.closest('#course-settings') ? 'settings'
     : event.target.closest('#course [data-category]')?.dataset.category ?? null
 }, true)
+document.addEventListener('focusin', (event) => {
+  const element = event.target
+  if (element.closest('.course-context')) return
+  const card = element.closest('#course [data-category]')
+  if (card) {
+    courseEditTarget = card.dataset.category
+    const field = [...card.querySelectorAll('.custom-place input')].indexOf(element)
+    lastCourseEditor = {
+      category: card.dataset.category,
+      selector: field >= 0 ? `.custom-place input:nth-of-type(${field + 1})`
+        : element.matches('.custom-place summary') ? '.custom-place summary'
+          : element.closest('.candidate-picker') ? '.candidate-picker summary' : 'h3',
+    }
+  } else if (element.closest('#course-settings')) {
+    courseEditTarget = 'settings'
+    lastCourseEditor = { settings: true, id: element.id }
+  } else return
+})
 for (const id of ['course-context-action', 'course-edit-context-action']) byId(id).addEventListener('click', (event) => {
+  const editor = event.currentTarget === byId('course-edit-context-action') ? courseEditContext.parentElement : null
+  const category = editor?.dataset.category
+  const origin = editor?.id === 'course-settings'
+    ? lastCourseEditor?.settings ? lastCourseEditor : { settings: true }
+    : category ? lastCourseEditor?.category === category ? lastCourseEditor : { category, selector: 'h3' } : null
+  courseActionReturn = origin ? { ...origin, station: selected.id } : null
+  byId('return-to-course-editor').textContent = origin?.settings
+    ? '거리·순서 편집으로 돌아가기' : origin ? `${categoryLabels.get(category)} 편집으로 돌아가기` : '편집하던 곳으로 돌아가기'
+  updateCourseContext()
   focusSection(byId(event.currentTarget.getAttribute('aria-controls')))
+})
+byId('return-to-course-editor').addEventListener('click', () => {
+  const origin = courseActionReturn
+  courseActionReturn = null
+  byId('return-to-course-editor').hidden = true
+  if (!origin || origin.station !== selected?.id) return
+  const editor = origin.settings ? byId('course-settings')
+    : byId('course').querySelector(`[data-category="${origin.category}"]`)
+  let target = origin.settings ? origin.id ? byId(origin.id) : null : editor?.querySelector(origin.selector)
+  // Resolve a fresh, visible control after saving/rerendering; never reopen a folded editor.
+  const folded = target?.closest('details:not([open])')
+  if (!target?.getClientRects().length || target.closest('[hidden]')
+    || (folded && !folded.querySelector('summary')?.contains(target))) {
+    target = editor?.querySelector(origin.settings ? 'summary' : 'h3')
+  }
+  if (target) {
+    target.focus({ preventScroll: true })
+    updateCourseContext()
+    target.scrollIntoView({ block: 'center' })
+  }
 })
 
 function showStorageRecovery(kind) {
@@ -732,6 +784,9 @@ function saveDraft(station, edited = true, saveShared = false) {
 function selectStation(station, centerOnMap = false, scroll = true, sharedCourse = null, useNearbyDefaults = false) {
   if (drawing) return
   customFormDrafts.clear()
+  lastCourseEditor = null
+  courseActionReturn = null
+  byId('return-to-course-editor').hidden = true
   byId('storage-recovery').hidden = true
   courseEditTarget = null
   courseEditContext.remove()
@@ -923,6 +978,11 @@ function readCustomPlace(value) {
 }
 
 function renderCourse(station, queryPrefix, sharedCourse) {
+  const returnCategory = courseActionReturn?.station === station.id ? courseActionReturn.category : null
+  const returnDisclosures = returnCategory ? ['.custom-place', '.candidate-picker'].flatMap((selector) => {
+    const details = byId('course').querySelector(`[data-category="${returnCategory}"] ${selector}`)
+    return details ? [[selector, details.open]] : []
+  }) : []
   for (const [key, draft] of customFormDrafts) {
     const entry = byId('course').querySelector(`[data-category="${key}"] .custom-place`)
     if (entry) draft.open = entry.open
@@ -1446,6 +1506,9 @@ function renderCourse(station, queryPrefix, sharedCourse) {
     item.append(header, art, content, actions)
     return item
   }))
+  for (const [selector, open] of returnDisclosures) {
+    byId('course').querySelector(`[data-category="${returnCategory}"] ${selector}`)?.toggleAttribute('open', open)
+  }
   const stats = byId('station-stats')
   renderSharedCourseChanges()
   const statsParts = [formatCandidateCounts(candidateCounts) || '장소 후보 없음']
@@ -2856,6 +2919,8 @@ function setCoursePage(open) {
 }
 
 function returnToDraw() {
+  courseActionReturn = null
+  byId('return-to-course-editor').hidden = true
   const url = new URL(location.href)
   url.search = ''
   url.hash = ''
