@@ -1144,11 +1144,17 @@ function renderCourse(station, queryPrefix, sharedCourse) {
           return option
         })
         function chooseCandidate(candidateIndex) {
+          const previousPlace = courseSelection.get(key)?.key
           const resolvingSharedPlace = unresolvedSharedPlaces.delete(key)
           preferenceNotice.remove()
           index = candidateIndex
           preferredPlaces.set(key, candidateToken(candidates[index]))
           showPlace()
+          if (!backToMap.hidden && courseSelection.get(key)?.key !== previousPlace) {
+            backToMap.dataset.changed = 'true'
+            backToMap.textContent = hasCoordinates(courseSelection.get(key))
+              ? '바꾼 장소 지도에서 확인' : '지도 미표시 이유 확인'
+          }
           renderSharedCourseChanges()
           buttons.forEach((button, i) => button.setAttribute('aria-pressed', String(i === index)))
           renderCourseMap(station)
@@ -1245,9 +1251,16 @@ function renderCourse(station, queryPrefix, sharedCourse) {
     backToMap.textContent = '코스 지도로 돌아가기'
     backToMap.hidden = true
     backToMap.addEventListener('click', () => {
-      const mapButton = byId('course-location').querySelector(`button[data-map-stop="${key}"]`)
-      focusSection(mapButton ?? byId('course-location-title'))
+      if (backToMap.dataset.changed && hasCoordinates(courseSelection.get(key))) {
+        courseMapDisclosure.open = true
+        showMapPlace(key)
+      } else {
+        const mapButton = byId('course-location').querySelector(`button[data-map-stop="${key}"]`)
+        focusSection(mapButton ?? byId('course-location-title'))
+      }
       backToMap.hidden = true
+      delete backToMap.dataset.changed
+      backToMap.textContent = '코스 지도로 돌아가기'
     })
     actions.append(backToMap)
     const toggle = document.createElement('button')
@@ -1258,6 +1271,9 @@ function renderCourse(station, queryPrefix, sharedCourse) {
       content.hidden = omitted
       actions.hidden = omitted
       if (omitted) {
+        backToMap.hidden = true
+        delete backToMap.dataset.changed
+        backToMap.textContent = '코스 지도로 돌아가기'
         closeCandidates()
         customEntry.open = false
         omittedStops.add(key)
