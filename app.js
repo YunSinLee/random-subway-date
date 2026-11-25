@@ -1605,6 +1605,19 @@ function arrangeCourseStops() {
   for (const key of visitOrder()) course.append(stops.get(key))
 }
 
+byId('edit-course-summary').addEventListener('click', () => {
+  courseActionReturn = null
+  byId('return-to-course-editor').hidden = true
+  byId('course-settings').open = true
+  byId('edit-course-summary').setAttribute('aria-expanded', 'true')
+  courseEditTarget = 'settings'
+  updateCourseContext()
+  focusSection(courseRadius)
+})
+byId('course-settings').addEventListener('toggle', () => {
+  byId('edit-course-summary').setAttribute('aria-expanded', String(byId('course-settings').open))
+})
+
 courseRadius.addEventListener('change', () => {
   if (!selected) return
   const params = courseParams()

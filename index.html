@@ -91,7 +91,10 @@
           <p id="station-line-preview-message"></p>
           <button type="button" id="open-preview-line">노선 설정으로 이동</button>
         </div>
-        <p id="station-stats" class="station-stats" aria-live="polite"></p>
+        <button type="button" id="edit-course-summary" class="course-summary-edit" aria-labelledby="course-summary-edit-label" aria-describedby="station-stats" aria-controls="course-settings" aria-expanded="false">
+          <span id="station-stats" class="station-stats" aria-live="polite"></span>
+          <span id="course-summary-edit-label">이 코스 거리·순서 편집</span>
+        </button>
         <div id="omitted-course-actions" hidden>
           <button type="button" id="restore-omitted" aria-describedby="restore-omitted-note">뺀 분류 모두 다시 넣기</button>
           <p id="restore-omitted-note" class="course-distance">기존 장소·설정을 초기화하지 않아요.</p>

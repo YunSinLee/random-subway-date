@@ -143,6 +143,8 @@ footer { padding: 15px 0 23px; }
 .draw-entry { display: grid; justify-items: end; gap: 7px; }
 .intro .draw-pool, .station-stats { color: var(--muted); font-size: 12px; margin: 0; }
 .station-stats { margin-top: 8px; }
+.course-summary-edit { display: block; width: 100%; min-height: 44px; margin-top: 8px; padding: 4px 0; border: 0; background: transparent; color: var(--muted); font-size: 12px; text-align: start; overflow-wrap: anywhere; }
+.course-summary-edit #course-summary-edit-label { display: inline-block; max-width: 100%; color: var(--green); text-decoration: underline; }
 .course-context { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; color: var(--muted); font-size: 12px; }
 .course-context button { min-height: 44px; padding: 4px 0; border: 0; background: transparent; color: var(--green); text-decoration: underline; }
 .course-stop > .course-context { margin-top: 8px; border-top: 1px solid var(--border); }

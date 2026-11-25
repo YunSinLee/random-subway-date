@@ -200,6 +200,35 @@ async function checkFilterScopes(browser) {
   } finally { await context.close() }
 }
 
+async function checkCourseSummaryEntry(browser) {
+  const context = await browser.newContext({ viewport: { width: 320, height: 844 }, reducedMotion: 'reduce' })
+  try {
+    const page = await context.newPage()
+    await page.goto(new URL('?course=0208', home).href)
+    const entry = page.getByRole('button', { name: '이 코스 거리·순서 편집', exact: true })
+    const before = await page.evaluate(() => ({ radius: document.querySelector('#course-radius').value,
+      order: document.querySelector('#course-order').value, draft: localStorage.getItem('subway-date:draft:0208'),
+      preferences: localStorage.getItem('subway-date:draw-preferences') }))
+    await entry.focus()
+    await page.keyboard.press('Enter')
+    assert.equal(await page.locator(':focus').getAttribute('id'), 'course-radius')
+    assert.ok(await page.locator('#course-settings').getAttribute('open') !== null)
+    assert.equal(await entry.getAttribute('aria-expanded'), 'true')
+    assert.deepEqual(await page.evaluate(() => ({ radius: document.querySelector('#course-radius').value,
+      order: document.querySelector('#course-order').value, draft: localStorage.getItem('subway-date:draft:0208'),
+      preferences: localStorage.getItem('subway-date:draw-preferences') })), before)
+    await page.keyboard.press('Shift+Tab')
+    assert.equal(await page.locator(':focus').getAttribute('id'), 'course-order')
+    await page.locator('#course-settings summary').click()
+    await page.waitForFunction(() => document.querySelector('#edit-course-summary').getAttribute('aria-expanded') === 'false')
+    await entry.click()
+    await page.getByLabel('후보 거리', { exact: true }).selectOption('500')
+    assert.match(await page.locator('#station-stats').innerText(), /직선 500m/)
+    assert.equal(await entry.getAttribute('aria-controls'), 'course-settings')
+    console.log('Passed: course summary explicitly opens current editing without changing saved conditions, with radius/order keyboard focus')
+  } finally { await context.close() }
+}
+
 async function main() {
   const browser = await chromium.launch({ channel: 'chrome', args: ['--host-resolver-rules=MAP tile.openstreetmap.org ~NOTFOUND, MAP oapi.map.naver.com ~NOTFOUND'] })
   try {
@@ -1737,6 +1766,7 @@ async function main() {
     await checkUnsubmittedPlace(browser)
     await checkCandidateComparison(browser)
     await checkFilterScopes(browser)
+    await checkCourseSummaryEntry(browser)
     console.log('Passed: draw animation, station and distance filters, touch map, course editing, reload, and sharing')
   } finally {
     await browser.close()
