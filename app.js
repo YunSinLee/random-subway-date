@@ -1523,7 +1523,7 @@ function renderCourse(station, queryPrefix, sharedCourse) {
     const header = document.createElement('div')
     header.className = 'course-stop-header'
     header.append(number, title, toggle)
-    item.append(header, ...(candidatePicker ? [candidatePicker] : []), art, content, actions)
+    item.append(header, ...(candidatePicker ? [candidatePicker] : []), content, art, actions)
     return item
   }))
   for (const [selector, open] of returnDisclosures) {

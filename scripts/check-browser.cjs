@@ -149,7 +149,7 @@ async function checkUnsubmittedPlace(browser) {
 }
 
 async function checkCandidateComparison(browser) {
-  const context = await browser.newContext({ viewport: { width: 320, height: 844 }, reducedMotion: 'reduce' })
+  const context = await browser.newContext({ viewport: { width: 320, height: 568 }, reducedMotion: 'reduce' })
   try {
     const page = await context.newPage()
     await page.goto(new URL('?course=0208', home).href)
@@ -165,6 +165,10 @@ async function checkCandidateComparison(browser) {
       assert.equal(await card.locator('div[aria-live] > strong').innerText(), names[index])
       assert.equal(await picker.locator('button[aria-pressed="true"] strong').textContent(), names[index])
       assert.equal(await card.locator('img').count(), index === 2 ? 0 : 1)
+      const identity = await card.locator('div[aria-live] > strong').boundingBox()
+      assert.ok(identity.y >= 0 && identity.y + identity.height <= 568, 'Selected identity stays readable in the short viewport after comparison')
+      if (index !== 2) assert.ok(identity.y + identity.height <= (await card.locator('img').boundingBox()).y,
+        'Selected identity precedes the decoded photograph')
       assert.ok(await summary.evaluate(n => n === document.activeElement))
       assert.ok(Math.abs(await summary.evaluate(n => n.getBoundingClientRect().top - n.closest('.course-stop').getBoundingClientRect().top) - position) < 1,
         'Candidate entry stays anchored to its card when photos appear/disappear')
