@@ -1,6 +1,8 @@
 import { createBasemap, projectStation } from './data/basemap.js'
+import { createNaverCourseMap } from './data/naver-course-map.js'
 import network from './data/network.js'
 import places from './data/places.js'
+import placePhotos from './data/place-photos.js'
 import parks from './data/parks.js'
 import markets from './data/markets.js'
 import shops from './data/shops.js'
@@ -8,8 +10,23 @@ import shopSourceMonth from './data/shop-source.js'
 
 const byId = (id) => document.getElementById(id)
 const appTitle = document.title
+const courseEditContext = byId('course-edit-context')
+let courseEditTarget = null
+let lastCourseEditor = null
+let courseActionReturn = null
 const map = byId('map')
 const drawSettings = byId('draw-settings')
+const renderNaverCourseMap = createNaverCourseMap(
+  byId('naver-course-map'), byId('course-map'), byId('course-map-attribution'),
+)
+const renderCourseBasemap = createBasemap(byId('course-map-background'))
+const courseMapDisclosure = byId('course-map-disclosure')
+let showCourseMap = null
+
+courseMapDisclosure.addEventListener('toggle', () => {
+  if (courseMapDisclosure.open && !byId('result').hidden) showCourseMap?.()
+  else closeMapPlace()
+})
 const renderBasemap = createBasemap(byId('map-background'))
 const lines = new Map(network.lines.map((line) => [line.id, line]))
 const stations = new Map(network.stations.map((station) => [station.id, {
@@ -39,7 +56,7 @@ let moved = false
 const mapTouches = new Map()
 let pinch = null
 let drawing = false
-let drawAnimation = null
+let drawTimer = null
 let drawResult = null
 let drawTrigger = null
 let drawOrigin = null
@@ -47,6 +64,7 @@ const recentDraws = []
 const drawnStations = new Set()
 const courseSelection = new Map()
 const omittedStops = new Set()
+const omissionSetters = new Map()
 const courseCategories = [
   ['activity', '놀거리', '놀거리'],
   ['food', '먹거리', '맛집'],
@@ -115,7 +133,7 @@ for (const station of stations.values()) {
   label.textContent = station.name
   marker.append(title, circle, label)
   function openStationCourse() {
-    if (station === selected) {
+    if (station === selected && !byId('result').hidden) {
       focusSection(byId('station-name'))
       return
     }
@@ -216,7 +234,7 @@ function drawMap() {
   const { left, right, top, bottom } = networkBounds
   controls.x = limitMapCenter(controls.x, left, right, controls.width)
   controls.y = limitMapCenter(controls.y, top, bottom, controls.height)
-  renderBasemap(controls)
+  if (!byId('draw-page').hidden) renderBasemap(controls)
   const points = new Map(visible.map((station) => [station.id, screenPoint(station)]))
   for (const line of lines.values()) {
     const path = railPaths.get(line.id)
@@ -335,23 +353,6 @@ function refreshDrawPool() {
     label.classList.toggle('line-without-complete-course', matching === 0)
   }
   const count = pool.length
-  const selectedLines = [...lines.values()].filter((line) => enabled.has(line.id))
-  byId('scope-summary').textContent = enabled.size === lines.size ? '전체 노선' : `선택한 노선 ${enabled.size}개`
-  byId('scope-count').textContent = `후보 역 ${count}곳`
-  byId('machine-count').textContent = `${count} STATIONS`
-  byId('topbar-caption').textContent = `${enabled.size}개 노선 · ${count}개 역`
-  const tags = byId('scope-tags')
-  tags.replaceChildren(...selectedLines.slice(0, 4).map((line) => {
-    const item = document.createElement('li')
-    item.textContent = line.name
-    item.style.setProperty('--line', line.color)
-    return item
-  }))
-  if (selectedLines.length > 4) {
-    const more = document.createElement('li')
-    more.textContent = `+${selectedLines.length - 4}`
-    tags.append(more)
-  }
   const preview = lines.get(previewFor(selected))
   const previewNotice = byId('station-line-preview')
   const excludedByPlaces = selected && !preview && !pool.includes(selected)
@@ -381,6 +382,12 @@ function refreshDrawPool() {
   }
   const drawPoolNotice = byId('draw-pool')
   if (drawPoolNotice.textContent !== message) drawPoolNotice.textContent = message
+  const settingsMessage = count
+    ? `뽑기 후보 ${count}개 역 · ${enabled.size}개 노선 선택`
+    : enabled.size ? '조건에 맞는 역이 없어요. 장소 후보 조건을 끄거나 다른 노선을 켜보세요.'
+      : '선택한 노선이 없어요. 뽑을 노선을 하나 이상 켜주세요.'
+  const settingsPool = byId('settings-pool')
+  if (settingsPool.textContent !== settingsMessage) settingsPool.textContent = settingsMessage
   byId('fit-seoul').disabled = !visible.some(isInCentralSeoul)
   byId('fit-selected').disabled = !enabledStations.length
   byId('map-hint').hidden = enabledStations.length > count
@@ -401,7 +408,8 @@ function refreshDrawPool() {
   const otherCount = count - Number(pool.includes(selected))
   const courseCount = byId('course-draw-count')
   courseCount.hidden = !otherCount
-  courseCount.textContent = otherCount ? `다른 후보 역 ${otherCount}곳 · 역마다 1/${otherCount}` : ''
+  const courseDrawCondition = nearbyOnly ? ' · 세 분류 직선 800m 후보' : hasPlaceCondition ? ' · 세 분류 후보' : ''
+  courseCount.textContent = otherCount ? `다음 역 후보 ${otherCount}곳${courseDrawCondition} · 역마다 1/${otherCount}` : ''
   const canRelaxPlaceCondition = hasPlaceCondition && enabledStations.some((station) =>
     station !== selected)
   const courseUnavailable = byId('course-draw-unavailable')
@@ -413,7 +421,6 @@ function refreshDrawPool() {
     : count ? '' : message
   byId('clear-place-condition').hidden = Boolean(count) || !enabled.size || !hasPlaceCondition
   byId('draw').disabled = drawing || !count
-  if (byId('draw').disabled) cancelLevers()
   byId('draw-from-course').disabled = drawing || !count || onlyCurrent
   byId('open-draw-filters').dataset.target = enabled.size && (!count || (onlyCurrent && canRelaxPlaceCondition))
     ? placeConditionId
@@ -475,13 +482,127 @@ function isNearbyCandidate([, , , meters]) {
 
 const draftKey = 'subway-date:draft'
 const editedCoursesKey = 'subway-date:edited-courses'
+let draftReadFailed = false
+let unreadDraftContext = null
+
+function updateCourseContext() {
+  const summary = byId('course-context')
+  summary.hidden = !selected
+  if (!selected) return
+  const recovery = byId('storage-recovery')
+  let text = '이 기기에 저장된 코스'
+  let action = '공유 동작 보기'
+  let target = 'share-course-primary'
+  if (!recovery.hidden) {
+    const metadata = recovery.dataset.kind === 'metadata'
+    text = metadata ? '코스 저장됨 · 목록 갱신 필요'
+      : recovery.dataset.kind === 'read' ? unreadDraftContext?.edited ? '현재 편집 미저장' : '저장본 확인 실패 · 자동 저장 중지'
+        : '현재 코스 저장 실패'
+    action = metadata ? '목록 갱신 동작 보기' : '보관·복구 동작 보기'
+    target = metadata ? 'retry-course-storage' : 'copy-recovery-link'
+  } else if (viewingSharedCourse) {
+    const edited = openedSharedCourse !== null && courseParams().toString() !== openedSharedCourse
+    text = edited ? '공유 편집본 · 이 기기에 저장 전' : '공유받은 코스 · 이 기기에 저장 전'
+    action = '저장 동작 보기'
+    target = 'save-shared-course'
+  }
+  if (customFormDrafts.size) text += ' · 입력 중인 장소는 미저장'
+  const returnButton = byId('return-to-course-editor')
+  returnButton.hidden = !courseActionReturn || courseActionReturn.station !== selected.id
+  if (!returnButton.hidden) byId(target).after(returnButton)
+  for (const row of [summary, courseEditContext]) {
+    row.querySelector('span').textContent = text
+    const button = row.querySelector('button')
+    button.textContent = action
+    button.setAttribute('aria-controls', target)
+  }
+  const editor = courseEditTarget === 'settings' ? byId('course-settings')
+    : courseEditTarget && byId('course').querySelector(`[data-category="${courseEditTarget}"]:not(.course-stop-omitted)`)
+  courseEditContext.hidden = !editor
+  if (!editor) courseEditContext.remove()
+  else if (courseEditContext.parentElement !== editor) editor.append(courseEditContext)
+}
+
+for (const type of ['click', 'change', 'submit']) document.addEventListener(type, (event) => {
+  courseEditTarget = event.target.closest('#course-settings') ? 'settings'
+    : event.target.closest('#course [data-category]')?.dataset.category ?? null
+}, true)
+document.addEventListener('focusin', (event) => {
+  const element = event.target
+  if (element.closest('.course-context')) return
+  const card = element.closest('#course [data-category]')
+  if (card) {
+    courseEditTarget = card.dataset.category
+    const field = [...card.querySelectorAll('.custom-place input')].indexOf(element)
+    lastCourseEditor = {
+      category: card.dataset.category,
+      selector: field >= 0 ? `.custom-place input:nth-of-type(${field + 1})`
+        : element.matches('.custom-place summary') ? '.custom-place summary'
+          : element.closest('.candidate-picker') ? '.candidate-picker summary' : 'h3',
+    }
+  } else if (element.closest('#course-settings')) {
+    courseEditTarget = 'settings'
+    lastCourseEditor = { settings: true, id: element.id }
+  } else return
+})
+for (const id of ['course-context-action', 'course-edit-context-action']) byId(id).addEventListener('click', (event) => {
+  const editor = event.currentTarget === byId('course-edit-context-action') ? courseEditContext.parentElement : null
+  const category = editor?.dataset.category
+  const origin = editor?.id === 'course-settings'
+    ? lastCourseEditor?.settings ? lastCourseEditor : { settings: true }
+    : category ? lastCourseEditor?.category === category ? lastCourseEditor : { category, selector: 'h3' } : null
+  courseActionReturn = origin ? { ...origin, station: selected.id } : null
+  byId('return-to-course-editor').textContent = origin?.settings
+    ? '거리·순서 편집으로 돌아가기' : origin ? `${categoryLabels.get(category)} 편집으로 돌아가기` : '편집하던 곳으로 돌아가기'
+  updateCourseContext()
+  focusSection(byId(event.currentTarget.getAttribute('aria-controls')))
+})
+byId('return-to-course-editor').addEventListener('click', () => {
+  const origin = courseActionReturn
+  courseActionReturn = null
+  byId('return-to-course-editor').hidden = true
+  if (!origin || origin.station !== selected?.id) return
+  const editor = origin.settings ? byId('course-settings')
+    : byId('course').querySelector(`[data-category="${origin.category}"]`)
+  let target = origin.settings ? origin.id ? byId(origin.id) : null : editor?.querySelector(origin.selector)
+  // Resolve a fresh, visible control after saving/rerendering; never reopen a folded editor.
+  const folded = target?.closest('details:not([open])')
+  if (!target?.getClientRects().length || target.closest('[hidden]')
+    || (folded && !folded.querySelector('summary')?.contains(target))) {
+    target = editor?.querySelector(origin.settings ? 'summary' : 'h3')
+  }
+  if (target) {
+    target.focus({ preventScroll: true })
+    updateCourseContext()
+    target.scrollIntoView({ block: 'center' })
+  }
+})
+
+function showStorageRecovery(kind) {
+  const recovery = byId('storage-recovery')
+  recovery.hidden = false
+  recovery.dataset.kind = kind
+  const editedUnread = kind === 'read' && unreadDraftContext?.station === selected?.id && unreadDraftContext.edited
+  const message = kind === 'read'
+    ? editedUnread
+      ? '읽지 못한 저장본 대신 현재 화면을 편집 중이에요. 아직 저장하지 않았어요. 저장본을 다시 열면 현재 편집을 대체해요. 먼저 복구용 링크로 보관하세요.'
+      : '저장본을 읽지 못했어요. 기존 저장본을 바꾸지 않아요. 현재 화면을 보관한 뒤 다시 불러오세요.'
+    : kind === 'metadata' ? '코스는 저장했지만 최근 저장 목록을 갱신하지 못했어요.'
+      : '현재 코스를 저장하지 못했어요. 새로고침 전에 복구용 링크나 텍스트로 보관하세요.'
+  const notice = byId('storage-recovery-message')
+  if (notice.textContent !== message) notice.textContent = message
+  byId('retry-course-storage').textContent = kind === 'read' ? editedUnread ? '현재 편집 대신 저장본 열기' : '저장본 다시 불러오기'
+    : kind === 'metadata' ? '저장 목록 다시 갱신' : '현재 코스 저장 다시 시도'
+  updateCourseContext()
+}
 
 function editedCourseIds() {
   try {
     const ids = JSON.parse(localStorage.getItem(editedCoursesKey))
     if (Array.isArray(ids)) return [...new Set(ids.filter((id) => stations.has(id)))]
   } catch {
-    // The list can remain empty when browser storage is unavailable.
+    // A failed read must never become an empty list in a later write.
+    return null
   }
   return []
 }
@@ -496,8 +617,10 @@ function savedPlaceNames(params) {
 
 function renderSavedCourses() {
   const list = byId('saved-course-list')
+  const ids = editedCourseIds()
+  if (ids === null) return
   const focusedId = list.contains(document.activeElement) ? document.activeElement.dataset.stationId : null
-  const items = editedCourseIds().flatMap((id) => {
+  const items = ids.flatMap((id) => {
     const draft = readDraft(id)
     if (!draft) return []
     const station = stations.get(id)
@@ -521,6 +644,7 @@ function renderSavedCourses() {
     return item
   })
   byId('saved-courses').hidden = !items.length
+  byId('open-saved-courses').hidden = !items.length
   list.replaceChildren(...items)
   if (focusedId) {
     const restored = items.map((item) => item.firstElementChild).find((button) => button.dataset.stationId === focusedId)
@@ -531,6 +655,7 @@ function renderSavedCourses() {
 }
 
 function readDraft(stationId = null) {
+  draftReadFailed = false
   try {
     if (stationId) {
       const saved = localStorage.getItem(draftKey + ':' + stationId)
@@ -540,7 +665,8 @@ function readDraft(stationId = null) {
     if (draft && (!stationId || stationId === draft.station) &&
         stations.has(draft.station) && typeof draft.course === 'string') return draft
   } catch {
-    // The app still works when browser storage is unavailable.
+    draftReadFailed = true
+    showStorageRecovery('read')
   }
   return null
 }
@@ -575,6 +701,8 @@ function visitOrder() {
 }
 
 const customPlaces = new Map()
+// Unsubmitted fields belong only to this open course, never to its saved/shared data.
+const customFormDrafts = new Map()
 const preferredPlaces = new Map()
 const unresolvedSharedPlaces = new Map()
 const courseQueryKeys = ['order', 'radius', ...courseCategories.flatMap(([key]) => [key, `custom-${key}`, `preferred-${key}`])]
@@ -601,6 +729,7 @@ function courseParams({ includePreferences = true, preserveUnresolved = viewingS
 }
 
 let viewingSharedCourse = false
+let openedSharedCourse = null
 let openedDraft = null
 
 function saveDraft(station, edited = true, saveShared = false) {
@@ -615,32 +744,67 @@ function saveDraft(station, edited = true, saveShared = false) {
     }
     if (url.href !== location.href) history.replaceState(history.state, '', url.href)
   }
-  if (viewingSharedCourse && !saveShared) return false
+  if (viewingSharedCourse && !saveShared) {
+    refreshSharedSaveActions()
+    return false
+  }
+  if (!saveShared && unreadDraftContext?.station === station.id) {
+    if (edited) unreadDraftContext.edited = true
+    showStorageRecovery('read')
+    return false
+  }
+  readDraft(station.id)
+  if (draftReadFailed) return false
   try {
-    const serialized = course.toString()
+    localStorage.getItem(editedCoursesKey)
+  } catch {
+    showStorageRecovery('read')
+    return false
+  }
+  const serialized = course.toString()
+  try {
     localStorage.setItem(draftKey + ':' + station.id, serialized)
-    openedDraft = serialized
+  } catch {
+    showStorageRecovery('write')
+    return false
+  }
+  openedDraft = serialized
+  try {
     localStorage.setItem(draftKey, JSON.stringify({ station: station.id, course: serialized }))
     if (edited) {
-      const ids = [station.id, ...editedCourseIds().filter((id) => id !== station.id)]
+      const previousIds = editedCourseIds()
+      if (previousIds === null) throw new Error('Saved-course list could not be read')
+      const ids = [station.id, ...previousIds.filter((id) => id !== station.id)]
       localStorage.setItem(editedCoursesKey, JSON.stringify(ids))
     }
+    byId('storage-recovery').hidden = true
   } catch {
-    // The active course remains available for this visit.
-    return false
+    // The per-station draft is committed; a recent-list failure must not be called data loss.
+    showStorageRecovery('metadata')
   }
   byId('updated-course-actions').hidden = true
   if (edited && !saveShared) renderSavedCourses()
+  updateCourseContext()
   return true
 }
 
 function selectStation(station, centerOnMap = false, scroll = true, sharedCourse = null, useNearbyDefaults = false) {
   if (drawing) return
+  customFormDrafts.clear()
+  lastCourseEditor = null
+  courseActionReturn = null
+  byId('return-to-course-editor').hidden = true
+  byId('storage-recovery').hidden = true
+  courseEditTarget = null
+  courseEditContext.remove()
+  unreadDraftContext = null
   if (selected && selected !== station) markers.get(selected.id).marker.removeAttribute('aria-current')
   selected = station
   markers.get(station.id).marker.setAttribute('aria-current', 'true')
   byId('course-walk').open = false
+  courseMapDisclosure.open = !byId('result').classList.contains('course-page')
   viewingSharedCourse = Boolean(sharedCourse)
+  openedSharedCourse = null
   for (const button of byId('saved-course-list').querySelectorAll('button')) {
     if (!sharedCourse && button.dataset.stationId === station.id) button.setAttribute('aria-current', 'true')
     else button.removeAttribute('aria-current')
@@ -649,6 +813,7 @@ function selectStation(station, centerOnMap = false, scroll = true, sharedCourse
   byId('course-tools').open = false
   byId('course-settings').open = false
   const draft = readDraft(station.id)
+  if (draftReadFailed && !sharedCourse) unreadDraftContext = { station: station.id, edited: false }
   openedDraft = draft?.course ?? null
   byId('updated-course-actions').hidden = true
   byId('shared-course-actions').hidden = !sharedCourse
@@ -671,10 +836,18 @@ function selectStation(station, centerOnMap = false, scroll = true, sharedCourse
   byId('place-links').replaceChildren(naverLink('역 위치', queryPrefix), stationDirectionsLink(station))
   if (station.lines.includes('자기부상철도')) byId('place-links').append(maglevGuideLink())
   const defaultCourse = useNearbyDefaults ? nearbyCourseParams(station) : null
-  const savedCourse = draft && (!defaultCourse || editedCourseIds().includes(station.id))
+  // An unreadable index must not replace an available draft with nearby defaults.
+  const savedCourse = draft && (!defaultCourse || editedCourseIds()?.includes(station.id) !== false)
     ? new URLSearchParams(draft.course)
     : null
   renderCourse(station, queryPrefix, sharedCourse ?? savedCourse ?? defaultCourse)
+  if (viewingSharedCourse) {
+    const origin = history.state?.sharedCourseOrigin
+    openedSharedCourse = origin?.station === station.id && typeof origin.course === 'string'
+      ? origin.course : courseParams().toString()
+    history.replaceState({ ...history.state, sharedCourseOrigin: { station: station.id, course: openedSharedCourse } }, '', location.href)
+    refreshSharedSaveActions()
+  }
   if (!sharedCourse) saveDraft(station, false)
   byId('result').hidden = false
   if (centerOnMap) {
@@ -755,6 +928,27 @@ function placeKey([name, address]) {
   return JSON.stringify([name, address])
 }
 
+const venuePhotos = new Map(placePhotos.map((photo) => [placeKey([photo.name, photo.address]), photo]))
+
+function showCourseCardPhoto(art, candidate) {
+  art.replaceChildren()
+  if (!byId('result').classList.contains('course-page')) return
+  const photo = venuePhotos.get(placeKey(candidate))
+  if (!photo) return
+  const image = document.createElement('img')
+  image.src = './assets/place-photos/' + photo.image
+  image.alt = photo.name + ' 사진'
+  image.loading = 'lazy'
+  image.decoding = 'async'
+  const credit = externalMapLink('사진 출처 · 네이버 지도', `https://map.naver.com/p/entry/place/${photo.placeId}`)
+  credit.setAttribute('aria-label', photo.name + ' 사진 출처 · 네이버 지도')
+  image.addEventListener('error', () => {
+    image.remove()
+    credit.remove()
+  }, { once: true })
+  art.append(image, credit)
+}
+
 function candidateMapQuery([name, address, , , , , mapSearch], stationQuery) {
   return mapSearch ?? name + ' ' + (address || stationQuery)
 }
@@ -792,11 +986,21 @@ function readCustomPlace(value) {
 }
 
 function renderCourse(station, queryPrefix, sharedCourse) {
+  const returnCategory = courseActionReturn?.station === station.id ? courseActionReturn.category : null
+  const returnDisclosures = returnCategory ? ['.custom-place', '.candidate-picker'].flatMap((selector) => {
+    const details = byId('course').querySelector(`[data-category="${returnCategory}"] ${selector}`)
+    return details ? [[selector, details.open]] : []
+  }) : []
+  for (const [key, draft] of customFormDrafts) {
+    const entry = byId('course').querySelector(`[data-category="${key}"] .custom-place`)
+    if (entry) draft.open = entry.open
+  }
   courseSelection.clear()
   customPlaces.clear()
   preferredPlaces.clear()
   unresolvedSharedPlaces.clear()
   omittedStops.clear()
+  omissionSetters.clear()
   const radius = sharedCourse?.get('radius')
   courseRadius.value = [...courseRadius.options].some((option) => option.value === radius) ? radius : ''
   const order = sharedCourse?.get('order')
@@ -811,6 +1015,11 @@ function renderCourse(station, queryPrefix, sharedCourse) {
     const item = document.createElement('section')
     item.className = 'course-stop'
     item.dataset.category = key
+    const art = document.createElement('div')
+    art.className = 'course-card-art'
+    const number = document.createElement('span')
+    number.className = 'course-card-step'
+    number.setAttribute('aria-hidden', 'true')
     const title = document.createElement('h3')
     function changeRadius(value, showCandidates = false) {
       const previousRadius = Number(courseRadius.value)
@@ -868,7 +1077,7 @@ function renderCourse(station, queryPrefix, sharedCourse) {
     const preferredOutsideRadius = allCandidates.find((candidate) =>
       candidateToken(candidate) === preferred && !defaults.includes(candidate))
     const preferenceNotice = document.createElement('p')
-    preferenceNotice.className = 'place-source'
+    preferenceNotice.className = 'place-source course-preference'
     if (preferredOutsideRadius) {
       const [name, , , meters] = preferredOutsideRadius
       preferenceNotice.textContent = `이전에 고른 장소는 거리 조건 밖에 있어요. ${name}까지 ${outsideRadiusDistance(meters, radius)}예요. 조건을 넓히면 다시 선택돼요.`
@@ -900,13 +1109,37 @@ function renderCourse(station, queryPrefix, sharedCourse) {
     const submit = document.createElement('button')
     submit.type = 'submit'
     submit.textContent = '코스에 넣기'
+    const draftHint = document.createElement('small')
+    draftHint.id = 'place-draft-hint-' + key
+    draftHint.textContent = '코스에 넣기 전 입력은 이 화면에서만 임시 유지돼요. 저장·공유에는 포함되지 않아요.'
+    form.setAttribute('aria-describedby', draftHint.id)
+    const discardInput = document.createElement('button')
+    discardInput.type = 'button'
+    discardInput.textContent = '입력 되돌리기'
+    discardInput.setAttribute('aria-label', category + ' 미제출 입력 되돌리기')
+    function rememberInput() {
+      const changed = placeName.value !== (custom?.[0] ?? '') || address.value !== (custom?.[1] ?? '')
+      if (changed) customFormDrafts.set(key, { name: placeName.value, address: address.value, open: customEntry.open })
+      else customFormDrafts.delete(key)
+      discardInput.hidden = !changed
+      updateCourseContext()
+    }
+    form.addEventListener('input', rememberInput)
+    discardInput.addEventListener('click', () => {
+      placeName.value = custom?.[0] ?? ''
+      address.value = custom?.[1] ?? ''
+      placeName.setCustomValidity('')
+      rememberInput()
+      placeName.focus({ preventScroll: true })
+    })
     function applyCustomChange(params) {
+      customFormDrafts.delete(key)
       renderCourse(station, queryPrefix, params)
       clearShareFeedback()
       saveDraft(station)
       byId('course').querySelector(`[data-category="${key}"] .custom-place summary`).focus()
     }
-    form.append(placeName, address, addressHint, submit)
+    form.append(placeName, address, addressHint, draftHint, submit, discardInput)
     if (custom) {
       placeName.value = custom[0]
       address.value = custom[1]
@@ -922,6 +1155,13 @@ function renderCourse(station, queryPrefix, sharedCourse) {
         applyCustomChange(params)
       })
       form.append(remove)
+    }
+    const pendingInput = customFormDrafts.get(key)
+    discardInput.hidden = !pendingInput
+    if (pendingInput) {
+      placeName.value = pendingInput.name
+      address.value = pendingInput.address
+      customEntry.open = pendingInput.open
     }
     customEntry.append(addLabel, form)
     customEntry.addEventListener('keydown', (event) => {
@@ -959,13 +1199,15 @@ function renderCourse(station, queryPrefix, sharedCourse) {
     })
     let restorePlace = () => {}
     let closeCandidates = () => {}
+    let candidatePicker = null
+    let placeMapActions = null
     const sharedReplacement = document.createElement('span')
     if (!candidates.length) {
       const filteredOut = allCandidates.length > 0 && Boolean(courseRadius.value)
       const nearest = filteredOut ? Math.min(...allCandidates.map(([, , , meters]) => meters)) : null
       const emptyMessage = document.createElement('p')
       emptyMessage.textContent = filteredOut
-        ? `선택한 거리 안에 후보가 없어요. 가장 가까운 후보는 역에서 ${outsideRadiusDistance(nearest, radius)}예요. 거리 조건을 해제하면 ${allCandidates.length}곳을 볼 수 있어요.`
+        ? `선택한 직선거리 조건에 맞는 후보가 없어요. 가장 가까운 후보는 역에서 ${outsideRadiusDistance(nearest, radius)}예요. 거리 조건을 해제하면 ${allCandidates.length}곳을 볼 수 있어요.`
         : '등록된 후보가 없어요. 네이버 지도에서 찾거나 장소를 직접 추가할 수 있어요.'
       content.append(emptyMessage)
       if (filteredOut) {
@@ -1019,9 +1261,13 @@ function renderCourse(station, queryPrefix, sharedCourse) {
         link.setAttribute('aria-label', place + (mapSearch ? ' 출발점' : '') + ' 네이버 지도에서 보기')
         const distance = meters === undefined ? '거리 미확인' : '역에서 ' + straightDistance(meters)
         detail.textContent = `${description} · ${access === 'transit' ? '대중교통 이동' : distance}`
+        if (meters === undefined && access !== 'transit' && courseRadius.value) {
+          detail.textContent += ` · ${radiusLabel(courseRadius.selectedOptions[0])} 이내 여부 미확인`
+        }
         addressLine.textContent = address
         addressLine.hidden = !address
         const candidate = candidates[index]
+        showCourseCardPhoto(art, candidate)
         title.textContent = candidate === custom || isCurated ? category : category + ' · 가까운 후보'
         source.hidden = candidate === custom
         source.textContent = candidateSource(candidate)
@@ -1056,7 +1302,12 @@ function renderCourse(station, queryPrefix, sharedCourse) {
           actions.append(showMore)
         }
       }
-      actions.append(link, guide)
+      if (byId('result').classList.contains('course-page')) {
+        placeMapActions = document.createElement('div')
+        placeMapActions.className = 'course-actions course-place-map'
+        placeMapActions.append(link)
+      } else actions.append(link)
+      actions.append(guide)
       if (candidates.length > 1) {
         const picker = document.createElement('details')
         picker.className = 'candidate-picker'
@@ -1112,11 +1363,17 @@ function renderCourse(station, queryPrefix, sharedCourse) {
           return option
         })
         function chooseCandidate(candidateIndex) {
+          const previousPlace = courseSelection.get(key)?.key
           const resolvingSharedPlace = unresolvedSharedPlaces.delete(key)
           preferenceNotice.remove()
           index = candidateIndex
           preferredPlaces.set(key, candidateToken(candidates[index]))
           showPlace()
+          if (!backToMap.hidden && courseSelection.get(key)?.key !== previousPlace) {
+            backToMap.dataset.changed = 'true'
+            backToMap.textContent = hasCoordinates(courseSelection.get(key))
+              ? '바꾼 장소 지도에서 확인' : '지도 미표시 이유 확인'
+          }
           renderSharedCourseChanges()
           buttons.forEach((button, i) => button.setAttribute('aria-pressed', String(i === index)))
           renderCourseMap(station)
@@ -1151,7 +1408,8 @@ function renderCourse(station, queryPrefix, sharedCourse) {
           else summary.focus()
         })
         picker.append(summary, keyboardHint, options)
-        actions.append(picker)
+        if (byId('result').classList.contains('course-page')) candidatePicker = picker
+        else actions.append(picker)
       }
       restorePlace = showPlace
     }
@@ -1165,6 +1423,22 @@ function renderCourse(station, queryPrefix, sharedCourse) {
           : '코스 거리 조건을 해제해 이전 장소 선택'
         restore.addEventListener('click', () => changeRadius(wider?.value ?? ''))
         preferenceNotice.append(' ', restore)
+      }
+      if (candidates.length === 1) {
+        const keepCurrent = document.createElement('button')
+        keepCurrent.type = 'button'
+        keepCurrent.textContent = '현재 장소로 선택'
+        keepCurrent.setAttribute('aria-label', candidates[0][0] + ' 현재 장소로 선택')
+        keepCurrent.addEventListener('click', () => {
+          const params = courseParams()
+          params.set(key, candidateToken(candidates[0]))
+          params.delete('preferred-' + key)
+          renderCourse(station, queryPrefix, params)
+          clearShareFeedback()
+          saveDraft(station)
+          focusSection(byId('course').querySelector(`[data-category="${key}"] h3`))
+        })
+        preferenceNotice.append(' ', keepCurrent)
       }
       content.append(preferenceNotice)
     }
@@ -1199,6 +1473,7 @@ function renderCourse(station, queryPrefix, sharedCourse) {
             placeName.value = name
             address.value = originalAddress
             placeName.setCustomValidity('')
+            rememberInput()
             placeName.focus()
           })
           actions.append(restoreOriginal)
@@ -1213,18 +1488,31 @@ function renderCourse(station, queryPrefix, sharedCourse) {
     backToMap.textContent = '코스 지도로 돌아가기'
     backToMap.hidden = true
     backToMap.addEventListener('click', () => {
-      const mapButton = byId('course-location').querySelector(`button[data-map-stop="${key}"]`)
-      focusSection(mapButton ?? byId('course-location-title'))
+      if (backToMap.dataset.changed && hasCoordinates(courseSelection.get(key))) {
+        courseMapDisclosure.open = true
+        showMapPlace(key)
+      } else {
+        const mapButton = byId('course-location').querySelector(`button[data-map-stop="${key}"]`)
+        focusSection(mapButton ?? byId('course-location-title'))
+      }
       backToMap.hidden = true
+      delete backToMap.dataset.changed
+      backToMap.textContent = '코스 지도로 돌아가기'
     })
     actions.append(backToMap)
     const toggle = document.createElement('button')
     toggle.type = 'button'
     toggle.className = 'course-toggle'
     function setOmitted(omitted) {
+      item.classList.toggle('course-stop-omitted', omitted)
       content.hidden = omitted
       actions.hidden = omitted
+      if (placeMapActions) placeMapActions.hidden = omitted
+      if (candidatePicker) candidatePicker.hidden = omitted
       if (omitted) {
+        backToMap.hidden = true
+        delete backToMap.dataset.changed
+        backToMap.textContent = '코스 지도로 돌아가기'
         closeCandidates()
         customEntry.open = false
         omittedStops.add(key)
@@ -1236,6 +1524,7 @@ function renderCourse(station, queryPrefix, sharedCourse) {
       toggle.textContent = omitted ? '추가하기' : '빼기'
       toggle.setAttribute('aria-label', category + (omitted ? ' 추가하기' : ' 빼기'))
     }
+    omissionSetters.set(key, setOmitted)
 
     toggle.addEventListener('click', () => {
       setOmitted(!omittedStops.has(key))
@@ -1247,10 +1536,13 @@ function renderCourse(station, queryPrefix, sharedCourse) {
     setOmitted(sharedCourse?.get(key) === 'omit')
     const header = document.createElement('div')
     header.className = 'course-stop-header'
-    header.append(title, toggle)
-    item.append(header, content, actions)
+    header.append(number, title, toggle)
+    item.append(header, ...(candidatePicker ? [candidatePicker] : []), content, ...(placeMapActions ? [placeMapActions] : []), art, actions)
     return item
   }))
+  for (const [selector, open] of returnDisclosures) {
+    byId('course').querySelector(`[data-category="${returnCategory}"] ${selector}`)?.toggleAttribute('open', open)
+  }
   const stats = byId('station-stats')
   renderSharedCourseChanges()
   const statsParts = [formatCandidateCounts(candidateCounts) || '장소 후보 없음']
@@ -1265,6 +1557,13 @@ function renderCourse(station, queryPrefix, sharedCourse) {
     : `대중교통 이동 후보 ${transitCandidateCount}곳 포함`)
   if (outsideRadiusCount) statsParts.push(`거리 조건 밖 후보 ${outsideRadiusCount}곳 제외`)
   stats.textContent = statsParts.join(' · ')
+  const radiusExceptions = byId('course-radius-exceptions')
+  const exceptions = []
+  if (unmeasuredCount) exceptions.push('거리 미확인')
+  if (transitCandidateCount) exceptions.push('대중교통 이동')
+  radiusExceptions.hidden = !courseRadius.value || !exceptions.length
+  radiusExceptions.textContent = exceptions.length
+    ? `${exceptions.join('·')} 후보는 거리 조건으로 제외하지 않아요.` : ''
   arrangeCourseStops()
   renderCourseMap(station)
 }
@@ -1274,11 +1573,18 @@ function refreshSharedSaveActions() {
   const openLocal = byId('open-local-course')
   const saveShared = byId('save-shared-course')
   const moveFocus = openLocal === document.activeElement
-  openLocal.hidden = !(editedCourseIds().includes(selected.id) && readDraft(selected.id))
-  const hasChanges = !byId('shared-course-changes').hidden
+  openLocal.hidden = !(editedCourseIds()?.includes(selected.id) && readDraft(selected.id))
+  const edited = openedSharedCourse !== null && courseParams().toString() !== openedSharedCourse
+  const stateMessage = edited
+    ? '공유 코스를 편집 중이에요 · 저장 전에는 이 기기의 저장본에 반영되지 않아요.'
+    : '공유받은 코스 · 저장 전에는 이 기기의 저장본에 반영되지 않아요.'
+  const sharedState = byId('shared-course-state')
+  if (sharedState.textContent !== stateMessage) sharedState.textContent = stateMessage
+  const hasChanges = edited || !byId('shared-course-changes').hidden
   const courseLabel = hasChanges ? '현재 코스' : '받은 코스'
   saveShared.textContent = openLocal.hidden ? courseLabel + ' 저장' : courseLabel + '로 저장본 바꾸기'
   if (moveFocus && openLocal.hidden) saveShared.focus({ preventScroll: true })
+  updateCourseContext()
 }
 
 function renderSharedCourseChanges() {
@@ -1328,6 +1634,19 @@ function arrangeCourseStops() {
   const stops = new Map([...course.children].map((item) => [item.dataset.category, item]))
   for (const key of visitOrder()) course.append(stops.get(key))
 }
+
+byId('edit-course-summary').addEventListener('click', () => {
+  courseActionReturn = null
+  byId('return-to-course-editor').hidden = true
+  byId('course-settings').open = true
+  byId('edit-course-summary').setAttribute('aria-expanded', 'true')
+  courseEditTarget = 'settings'
+  updateCourseContext()
+  focusSection(courseRadius)
+})
+byId('course-settings').addEventListener('toggle', () => {
+  byId('edit-course-summary').setAttribute('aria-expanded', String(byId('course-settings').open))
+})
 
 courseRadius.addEventListener('change', () => {
   if (!selected) return
@@ -1406,13 +1725,20 @@ undoShortestOrder.addEventListener('click', () => {
   byId('course-order-status').textContent = `이전 방문 순서로 돌아왔어요. ${courseOrder.selectedOptions[0].textContent}`
 })
 
-function focusSection(element) {
+function focusSection(element, block = 'center') {
   if (drawSettings.contains(element) && !drawSettings.open) drawSettings.showModal()
+  if (courseMapDisclosure.contains(element)) courseMapDisclosure.open = true
   element.focus({ preventScroll: true })
-  element.scrollIntoView({ block: 'center' })
+  element.scrollIntoView({ block })
 }
 
-byId('show-course-location').addEventListener('click', () => focusSection(byId('course-location-title')))
+byId('open-course-directions').addEventListener('click', () => {
+  const directions = byId('course-walk')
+  directions.open = true
+  focusSection(byId('course-walk-summary'))
+})
+byId('show-course-location').addEventListener('click', () => focusSection(byId('course-location-title'), 'start'))
+byId('back-to-course-list').addEventListener('click', () => focusSection(byId('show-course-location')))
 byId('open-preview-line').addEventListener('click', () => {
   const input = filterInputs.get(previewFor(selected)) ??
     byId(byId('nearby-course').checked ? 'nearby-course' : 'complete-course')
@@ -1433,21 +1759,83 @@ function courseJumpButton(key, label, { needsSearch = false, fromMap = false } =
   button.type = 'button'
   button.textContent = label
   if (needsSearch) button.classList.add('course-search-stop')
-  if (fromMap) button.dataset.mapStop = key
+  if (fromMap) {
+    button.dataset.mapStop = key
+    button.setAttribute('aria-label', label + ' · 장소 카드로 이동')
+  }
   button.addEventListener('click', () => focusCourseStop(key, fromMap))
   return button
 }
 
+const mapPlace = byId('map-place')
+let activeMapStop = null
+let mapPlaceTrigger = null
+
+function closeMapPlace(restoreFocus = false) {
+  const target = mapPlaceTrigger?.isConnected ? mapPlaceTrigger
+    : byId('course-map-legend').querySelector(`[data-map-detail="${activeMapStop}"]`)
+  mapPlace.hidden = true
+  activeMapStop = null
+  mapPlaceTrigger = null
+  if (restoreFocus && target) {
+    target.focus({ preventScroll: true })
+    target.scrollIntoView({ block: 'nearest' })
+  }
+}
+
+function showMapPlace(key, trigger = null) {
+  const place = courseSelection.get(key)
+  if (!place) return
+  const step = visitOrder().filter((category) => !omittedStops.has(category)).indexOf(key) + 1
+  activeMapStop = key
+  mapPlaceTrigger = trigger
+  const heading = byId('map-place-name')
+  heading.textContent = place.name
+  byId('map-place-category').textContent = `${step}. ${categoryLabels.get(key)}`
+  for (const field of ['address', 'description']) {
+    const detail = byId('map-place-' + field)
+    detail.textContent = place[field] ?? ''
+    detail.hidden = !detail.textContent
+  }
+  const details = document.createElement('button')
+  details.type = 'button'
+  details.textContent = '코스 상세'
+  details.addEventListener('click', () => {
+    closeMapPlace()
+    focusCourseStop(key, true)
+  })
+  byId('map-place-actions').replaceChildren(externalMapLink('네이버 지도', place.url), details)
+  mapPlace.hidden = false
+  heading.focus({ preventScroll: true })
+  heading.scrollIntoView({ block: 'center' })
+}
+
+byId('close-map-place').addEventListener('click', () => closeMapPlace(true))
+mapPlace.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeMapPlace(true)
+  }
+})
+
 function renderCourseMap(station) {
+  closeMapPlace()
+  byId('omitted-course-actions').hidden = !omittedStops.size
+  byId('restore-omitted').textContent = `뺀 분류 모두 다시 넣기 · ${omittedStops.size}개`
+  byId('course-restore-status').hidden = true
   undoShortestOrder.hidden = true
   byId('course-order-status').textContent = ''
   const included = visitOrder().filter((key) => !omittedStops.has(key))
+  for (const card of byId('course').children) {
+    const index = included.indexOf(card.dataset.category)
+    card.querySelector('.course-card-step').textContent = index < 0 ? '' : String(index + 1)
+  }
   const route = [[null, station], ...included.map((key) => [key, courseSelection.get(key)])]
   const pendingStops = included.filter((key) => !courseSelection.has(key))
   const pending = byId('course-pending')
   pending.hidden = !pendingStops.length
   pending.textContent = pendingStops.length
-    ? `장소를 고를 항목 ${pendingStops.length}개 · ${categoryLabels.get(pendingStops[0])}부터 고르기`
+    ? `후보 없는 항목 ${pendingStops.length}개 · ${categoryLabels.get(pendingStops[0])} 확인`
     : ''
   pending.onclick = pendingStops.length ? () => focusCourseStop(pendingStops[0]) : null
   const overview = byId('course-overview')
@@ -1460,7 +1848,9 @@ function renderCourseMap(station) {
     const label = document.createElement('span')
     label.className = 'course-overview-category'
     label.textContent = category
-    const destination = courseJumpButton(key, place?.name ?? category + ' 장소 고르기', { needsSearch: !place })
+    const emptyLabel = courseRadius.value && courseCandidates(station, key).length
+      ? `${category} 거리 조건 밖 · 확인` : `${category} 등록 후보 없음 · 확인`
+    const destination = courseJumpButton(key, place?.name ?? emptyLabel, { needsSearch: !place })
     const info = document.createElement('span')
     info.className = 'course-overview-distance'
     info.textContent = place?.access === 'transit' ? '대중교통 이동'
@@ -1484,7 +1874,9 @@ function renderCourseMap(station) {
     overview.append(row)
   }
   const stops = route.slice(1).filter(([, stop]) => hasCoordinates(stop))
-  byId('course-no-map').hidden = Boolean(stops.length) || !courseSelection.size
+  const onCoursePage = byId('result').classList.contains('course-page')
+  const showMap = onCoursePage || stops.length > 0
+  byId('course-no-map').hidden = showMap || !courseSelection.size
   const suggestion = shortestCourseOrder(station)
   const shortestOrderButton = byId('shortest-order')
   shortestOrderButton.hidden = !suggestion
@@ -1494,43 +1886,62 @@ function renderCourseMap(station) {
     shortestOrderButton.textContent = `${orderLabel} 순서 적용 · 직선 거리 ${straightDistance(suggestion.savings, '')} 단축`
   }
   const locationButton = byId('show-course-location')
-  locationButton.hidden = !stops.length
-  locationButton.textContent = stops.length < courseSelection.size
-    ? `코스 위치 보기 · ${stops.length}/${courseSelection.size}곳`
-    : '코스 위치 보기'
-  byId('course-location').hidden = !stops.length
+  locationButton.hidden = !showMap
+  locationButton.textContent = !stops.length ? '역 주변 지도 보기'
+    : stops.length < courseSelection.size ? `코스 위치 보기 · 장소 ${stops.length}곳 표시`
+      : '코스 위치 보기'
+  byId('course-location').hidden = !showMap
+  courseMapDisclosure.hidden = !showMap
+  showCourseMap = null
   const distance = byId('course-distance')
   const unmapped = route.slice(1).filter(([, stop]) => stop && !hasCoordinates(stop))
+  byId('course-map-availability').hidden = !showMap || !unmapped.length
+  byId('course-map-help').hidden = !stops.length
   const missing = byId('course-map-missing')
   missing.hidden = !unmapped.length
   missing.replaceChildren()
   if (unmapped.length) {
-    missing.append('좌표가 없어 지도에 표시되지 않은 장소 · ')
-    for (const [index, [key, stop]] of unmapped.entries()) {
-      if (index) missing.append(', ')
-      missing.append(courseJumpButton(key, stop.name, { fromMap: true }))
+    const caption = document.createElement('p')
+    caption.id = 'course-map-missing-label'
+    caption.textContent = '좌표가 없어 지도에 표시되지 않은 장소 · 방문 순번'
+    const list = document.createElement('ul')
+    list.setAttribute('aria-labelledby', caption.id)
+    for (const [key, stop] of unmapped) {
+      const label = `${included.indexOf(key) + 1}. ${categoryLabels.get(key)} · ${stop.name}`
+      const item = document.createElement('li')
+      item.append(courseJumpButton(key, label, { fromMap: true }))
+      list.append(item)
     }
+    missing.append(caption, list)
   }
 
-  const width = 280
-  const height = 150
+  const width = 560
+  const height = 340
   const points = stops.map(([key, stop]) => ({
-    x: (stop.lon - station.lon) * Math.cos(station.lat * Math.PI / 180),
-    y: station.lat - stop.lat,
+    ...projectStation(stop.lat, stop.lon),
     color: courseColors[key],
     step: included.indexOf(key) + 1,
     key,
     stop,
   }))
-  const scale = 1 / Math.max(.000025, ...points.map(({ x, y }) =>
-    Math.max(Math.abs(x) / 104, Math.abs(y) / 54)))
-  const map = byId('course-map')
-  map.setAttribute('viewBox', `0 0 ${width} ${height}`)
-  const center = { cx: width / 2, cy: height / 2 }
-  const positions = new Map([[station, center], ...points.map(({ x, y, stop }) => [
-    stop, { cx: center.cx + x * scale, cy: center.cy + y * scale },
-  ])])
+  const worldPoints = [station, ...points]
+  const bounds = stationBounds(worldPoints)
+  const x = (bounds.left + bounds.right) / 2
+  const y = (bounds.top + bounds.bottom) / 2
+  const unitsPerMeter = 880 / (111195 * Math.cos(station.lat * Math.PI / 180))
+  const scale = Math.min(
+    (width - 96) / Math.max(bounds.right - bounds.left, 450 * unitsPerMeter),
+    (height - 104) / Math.max(bounds.bottom - bounds.top, 300 * unitsPerMeter),
+  )
+  byId('course-map').setAttribute('viewBox', `0 0 ${width} ${height}`)
+  const map = byId('course-map-overlay')
+  const positions = new Map(worldPoints.map((point) => [
+    point.stop ?? point,
+    { cx: width / 2 + (point.x - x) * scale, cy: height / 2 + (point.y - y) * scale },
+  ]))
+  const center = positions.get(station)
   const segments = []
+  const connections = []
   const walkLinks = []
   let transitSegments = 0
   let total = 0
@@ -1571,9 +1982,10 @@ function renderCourseMap(station) {
     }
     const a = positions.get(start)
     const b = positions.get(end)
+    connections.push([start, end])
     segments.push(svg('line', {
       x1: a.cx, y1: a.cy, x2: b.cx, y2: b.cy,
-      stroke: '#68756b', 'stroke-width': 2, 'stroke-dasharray': '3 4',
+      class: 'course-map-segment',
     }))
     const segmentDistance = distanceBetween(start, end)
     total += segmentDistance
@@ -1588,6 +2000,7 @@ function renderCourseMap(station) {
   byId('course-walk-links').replaceChildren(...walkLinks)
   byId('course-walk').hidden = !stops.length && !transitSegments
   if (byId('course-walk').hidden) byId('course-walk').open = false
+  byId('open-course-directions').hidden = !onCoursePage || byId('course-walk').hidden
   byId('course-walk-summary').textContent =
     transitSegments
       ? `구간별 길찾기 · 도보 ${segments.length}구간 · 대중교통 확인 ${transitSegments}구간`
@@ -1598,17 +2011,35 @@ function renderCourseMap(station) {
   distance.textContent = segments.length
     ? `${distanceLabel} · ${straightDistance(total, '')} (${segments.length}/${segmentCount}구간)`
     : ''
-  if (!stops.length) return
-  map.replaceChildren(...segments, svg('circle', { ...center, r: 9, fill: '#242722', stroke: 'white', 'stroke-width': 2 }))
-  const targetMeters = 65 * 111195 / scale
+  if (!showMap) return
+  byId('course-map-note').textContent = segments.length ? '북쪽 ↑ · 직선으로 연결' : '북쪽 ↑'
+  if (onCoursePage) {
+    const renderFallback = () => renderCourseBasemap({ x, y, scale, width, height })
+    showCourseMap = () => {
+      if (!byId('course-map').hasAttribute('hidden')) renderFallback()
+      renderNaverCourseMap({
+        renderFallback,
+        station: { ...station, name: stationDisplayName(station) },
+        stops: points.map(({ stop, step, color, key }) => ({ place: stop, step, color, key })),
+        connections,
+        onStop: showMapPlace,
+      })
+    }
+    if (courseMapDisclosure.open) showCourseMap()
+  }
+  const stationMarker = svg('circle', { ...center, r: 14, fill: '#242722', stroke: 'white', 'stroke-width': 3 })
+  const stationLabel = svg('text', { x: center.cx, y: center.cy - 22, class: 'course-station-label' })
+  stationLabel.textContent = byId('station-name').textContent
+  map.replaceChildren(...segments, stationMarker, stationLabel)
+  const targetMeters = 70 / (unitsPerMeter * scale)
   const magnitude = 10 ** Math.floor(Math.log10(targetMeters))
   const unit = [5, 2, 1].find((value) => value * magnitude <= targetMeters) * magnitude
-  const barWidth = unit * scale / 111195
+  const barWidth = unit * unitsPerMeter * scale
   const bar = svg('path', {
-    d: `M 12 131 v 4 h ${barWidth} v -4`, class: 'course-scale-bar',
+    d: `M 16 ${height - 22} v 4 h ${barWidth} v -4`, class: 'course-scale-bar',
   })
   const scaleLabel = svg('text', {
-    x: 12 + barWidth / 2, y: 127, class: 'course-scale-label',
+    x: 16 + barWidth / 2, y: height - 28, class: 'course-scale-label',
   })
   scaleLabel.textContent = `${Number(unit.toPrecision(2))} m`
   map.append(bar, scaleLabel)
@@ -1617,12 +2048,12 @@ function renderCourseMap(station) {
   const entries = [{ color: '#242722', label: byId('station-name').textContent }]
   for (const { color, stop, step, key } of points) {
     const { cx, cy } = positions.get(stop)
-    const circle = svg('circle', { cx, cy, r: 8, fill: color, stroke: 'white', 'stroke-width': 2 })
+    const circle = svg('circle', { cx, cy, r: 15, fill: color, stroke: 'white', 'stroke-width': 3 })
     const label = svg('text', { x: cx, y: cy, class: 'course-map-step', 'aria-hidden': 'true' })
     label.textContent = step
     const marker = svg('g', { class: 'course-map-marker', 'aria-hidden': 'true' })
-    marker.append(svg('circle', { cx, cy, r: 12, fill: 'transparent' }), circle, label)
-    marker.addEventListener('click', () => focusCourseStop(key, true))
+    marker.append(svg('circle', { cx, cy, r: 21, fill: 'transparent' }), circle, label)
+    marker.addEventListener('click', () => showMapPlace(key))
     map.append(marker)
     entries.push({ color, key, marker, label: `${step}. ${stop.category} · ${stop.name}` })
   }
@@ -1638,7 +2069,14 @@ function renderCourseMap(station) {
       }
       marker.addEventListener('mouseenter', () => button.classList.add('highlighted'))
       marker.addEventListener('mouseleave', () => button.classList.remove('highlighted'))
-      item.append(button)
+      const detail = document.createElement('button')
+      detail.type = 'button'
+      detail.className = 'map-detail-button'
+      detail.dataset.mapDetail = key
+      detail.textContent = '지도 상세'
+      detail.setAttribute('aria-label', label + ' · 지도 상세 보기')
+      detail.addEventListener('click', () => showMapPlace(key, detail))
+      item.append(button, detail)
     } else {
       item.textContent = label
     }
@@ -1714,7 +2152,7 @@ function renderStationMatches() {
       button.addEventListener('click', () => {
         stationQuery.value = ''
         renderStationMatches()
-        if (station === selected) {
+        if (station === selected && !byId('result').hidden) {
           centerStation(station)
           drawMap()
           focusSection(byId('station-name'))
@@ -1786,99 +2224,7 @@ stationSearch.addEventListener('submit', (event) => {
 
 const reveal = byId('draw-reveal')
 const motionPreference = matchMedia('(prefers-reduced-motion: reduce)')
-const leverCancels = []
-const leverVisualResets = []
-for (const lever of [byId('draw'), byId('redraw')]) {
-  const scene = lever.querySelector('.lever-scene')
-  let pointer = null
-  let allowClick = true
-  let accepted = null
-  let animation = null
-  function resetVisual() {
-    if (animation) { animation.cancel(); animation = null }
-    scene.style.removeProperty('--lever-pull')
-  }
-  function animateLever(q, pull, duration = 180) {
-    resetVisual()
-    if (motionPreference.matches || typeof scene.animate !== 'function' || typeof CSS.registerProperty !== 'function') return
-    const frames = pull
-      ? [{ '--lever-pull': q }, { '--lever-pull': 0 }]
-      : [{ '--lever-pull': q, offset: 0, easing: 'cubic-bezier(.2,.65,.35,1)' }, { '--lever-pull': 1, offset: 100 / 280, easing: 'cubic-bezier(.2,.65,.35,1)' }, { '--lever-pull': 0, offset: 1 }]
-    animation = scene.animate(frames, { duration: pull ? duration : 280, easing: pull ? 'cubic-bezier(.2,.65,.35,1)' : 'linear' })
-    animation.onfinish = () => { animation = null; scene.style.removeProperty('--lever-pull') }
-  }
-  function cancel() {
-    if (pointer) {
-      const id = pointer.id
-      pointer = null
-      allowClick = false
-      if (lever.hasPointerCapture(id)) lever.releasePointerCapture(id)
-    }
-    accepted = null
-    resetVisual()
-  }
-  leverCancels.push(cancel)
-  leverVisualResets.push(resetVisual)
-  lever.addEventListener('pointerdown', (event) => {
-    if (lever.disabled || !event.isPrimary || event.button !== 0) return
-    resetVisual()
-    accepted = null
-    pointer = { id: event.pointerId, x: event.clientX, y: event.clientY }
-    allowClick = true
-    lever.setPointerCapture(event.pointerId)
-  })
-  lever.addEventListener('pointermove', (event) => {
-    if (!pointer || pointer.id !== event.pointerId) return
-    if (!motionPreference.matches && typeof scene.animate === 'function' && typeof CSS.registerProperty === 'function') scene.style.setProperty('--lever-pull', Math.max(0, Math.min(1, (event.clientY - pointer.y) / 20)))
-  })
-  lever.addEventListener('pointerup', (event) => {
-    if (!pointer || pointer.id !== event.pointerId) return
-    const x = event.clientX - pointer.x
-    const y = event.clientY - pointer.y
-    const tap = Math.hypot(x, y) <= 6
-    const pull = y >= 12 && y > Math.abs(x)
-    const q = Math.max(0, Math.min(1, y / 20))
-    allowClick = tap || pull
-    accepted = allowClick ? { q, pull } : null
-    pointer = null
-    if (lever.disabled) { allowClick = false; accepted = null; resetVisual() }
-    else if (!allowClick) animateLever(q, true, 140)
-    else if (event.pointerType === 'touch' && pull && !tap) {
-      allowClick = false
-      lever.click()
-    }
-  })
-  for (const type of ['pointercancel', 'lostpointercapture']) {
-    lever.addEventListener(type, (event) => {
-      if (pointer && pointer.id === event.pointerId) {
-        const q = Number(getComputedStyle(scene).getPropertyValue('--lever-pull')) || 0
-        cancel()
-        animateLever(q, true, 140)
-      }
-    })
-  }
-  lever.addEventListener('click', (event) => {
-    if (event.detail && !allowClick) { event.stopImmediatePropagation(); return }
-    const input = accepted ?? { q: 0, pull: false }
-    accepted = null
-    if (lever.id === 'draw') drawStation(null, lever)
-    else {
-      drawing = false
-      byId('dismiss-draw').focus()
-      drawStation(recentDraws[0])
-    }
-    if (reveal.open && drawResult && !motionPreference.matches) {
-      byId('redraw').dispatchEvent(new CustomEvent('lever-feedback', { detail: input }))
-    }
-  }, true)
-  lever.addEventListener('lever-feedback', (event) => animateLever(event.detail.q, event.detail.pull))
-}
-function cancelLevers() { leverCancels.forEach((cancel) => cancel()) }
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') cancelLevers()
-})
 motionPreference.addEventListener('change', (event) => {
-  leverVisualResets.forEach((reset) => reset())
   if (event.matches) revealResult()
 })
 
@@ -1886,14 +2232,10 @@ function drawLine(station) {
   return lines.get(station.lines.find((id) => enabled.has(id)))
 }
 
-function showTicket(station) {
+function showTicket(station, preview = false) {
   const line = drawLine(station)
-  const name = stationDisplayName(station)
-  byId('draw-station').textContent = name
-  byId('draw-station').style.setProperty('--chars', [...name].length)
-  const neighbors = line.edges.flatMap(([a, b]) => a === station.id ? [b] : b === station.id ? [a] : [])
-  byId('draw-prev').textContent = stations.get(neighbors[0]) ? stationDisplayName(stations.get(neighbors[0])) : ''
-  byId('draw-next').textContent = stations.get(neighbors[1]) ? stationDisplayName(stations.get(neighbors[1])) : ''
+  if (!preview) reveal.style.setProperty('--draw-color', line.color)
+  byId('draw-station').textContent = stationDisplayName(station)
   byId('draw-line').textContent = line.name
 }
 
@@ -1926,11 +2268,11 @@ function refreshDrawCourseNotice(counts = courseCategories.map(([key, label]) =>
   if (nearbyOnly) coverage.textContent = `직선 800m 이내 · ${coverage.textContent}`
   coverage.hidden = false
   const savedCourseNotice = byId('draw-saved-course')
-  const draft = editedCourseIds().includes(drawResult.id) ? readDraft(drawResult.id) : null
+  const draft = editedCourseIds()?.includes(drawResult.id) ? readDraft(drawResult.id) : null
   savedCourseNotice.hidden = !draft
+  byId('open-draw-result-label').textContent = savedCourseNotice.hidden ? '코스 보기' : '저장한 코스 보기'
   const resultDescription = ['draw-station', 'draw-line', 'draw-coverage']
   if (!savedCourseNotice.hidden) resultDescription.push(savedCourseNotice.id)
-  resultDescription.push('draw-confirm-hint')
   byId('open-draw-result').setAttribute('aria-describedby', resultDescription.join(' '))
   if (draft) {
     const params = new URLSearchParams(draft.course)
@@ -1953,14 +2295,9 @@ function refreshDrawCourseNotice(counts = courseCategories.map(([key, label]) =>
       if (!candidate) continue
       const item = document.createElement('li')
       const category = document.createElement('span')
-      category.className = 'draw-place-meta'
       category.textContent = label
       const name = document.createElement('strong')
       name.textContent = candidate[0]
-      const description = document.createElement('span')
-      description.className = 'draw-place-desc'
-      description.textContent = candidate[2] ? ` · ${candidate[2]}` : ''
-      category.append(description)
       item.append(category, name)
       if (candidate[8] === 'transit') {
         const access = document.createElement('small')
@@ -1972,7 +2309,7 @@ function refreshDrawCourseNotice(counts = courseCategories.map(([key, label]) =>
   }
   preview.hidden = !preview.childElementCount
   byId('draw-announcement').textContent = [
-    `${reveal.dataset.history === 'true' ? '이전에 뽑은 역' : '오늘 내릴 역'}은 ${stationDisplayName(drawResult)}입니다.`,
+    `${byId('draw-status').textContent}은 ${stationDisplayName(drawResult)}입니다.`,
     byId('draw-line').textContent,
     coverage.textContent,
     preview.hidden ? '' : [...preview.children].map((item) => [...item.children].map((part) => part.textContent).join(' ')).join(', '),
@@ -1984,7 +2321,6 @@ function refreshDrawCourseNotice(counts = courseCategories.map(([key, label]) =>
 
 function showWinner(fromHistory = false) {
   showTicket(drawResult)
-  reveal.style.setProperty('--draw-color', drawLine(drawResult).color)
   byId('draw-station').removeAttribute('aria-hidden')
   byId('draw-line').removeAttribute('aria-hidden')
   if (drawResult.lines.length > 1) {
@@ -2012,22 +2348,16 @@ function showWinner(fromHistory = false) {
       lineLabel.append(row)
     }
   }
-  reveal.dataset.history = String(fromHistory)
-  const title = byId('draw-status').children
-  title[0].textContent = fromHistory ? '이전에 뽑은 역은' : '오늘 내릴 역은'
-  title[1].textContent = `${stationDisplayName(drawResult)}!`
-  byId('draw-lead').textContent = '이 역에서 둘만의 데이트를 시작해 보세요.'
-  byId('draw-caption').textContent = '우리의 다음 데이트가 기다리고 있어요.'
+  byId('draw-status').textContent = fromHistory ? '이전에 뽑은 역' : '오늘 내릴 역'
   reveal.classList.add('landed')
   byId('open-draw-result').disabled = false
   const eligible = eligibleStations().filter((station) => station !== drawOrigin)
   const redraw = byId('redraw')
-  redraw.disabled = eligible.length < 2
+  redraw.hidden = eligible.length < 2
   const remaining = eligible.filter((station) => !drawnStations.has(station)).length
-  let redrawLabel = '다시 뽑기'
-  if (remaining === 1) redrawLabel = '남은 역 뽑기'
-  if (!remaining) redrawLabel = '새로 한 바퀴 뽑기'
-  redraw.setAttribute('aria-label', `손잡이 당겨 ${redrawLabel}`)
+  redraw.textContent = '다시 뽑기'
+  if (remaining === 1) redraw.textContent = '남은 역 뽑기'
+  if (!remaining) redraw.textContent = '새로 한 바퀴 뽑기'
   const drawRemaining = byId('draw-remaining')
   const nextRoundCount = eligible.length - 1
   const previousStation = recentDraws[0]
@@ -2077,23 +2407,15 @@ function showWinner(fromHistory = false) {
   history.hidden = !history.childElementCount
 }
 
-function clearDrawMotion() {
-  if (drawAnimation) {
-    drawAnimation.onfinish = null
-    drawAnimation.cancel()
-    drawAnimation = null
-  }
-  byId('draw-reel').querySelectorAll('.draw-preview-row').forEach((row) => row.remove())
-  reveal.classList.remove('spinning')
-  cancelLevers()
-}
-
 function revealResult() {
   if (!reveal.open || !drawResult || reveal.classList.contains('landed')) return
-  clearDrawMotion()
+  clearTimeout(drawTimer)
+  drawTimer = null
+  for (const animation of byId('draw-station').getAnimations?.() ?? []) animation.cancel()
   const skip = byId('skip-draw')
   const moveFocus = document.activeElement === skip
   skip.hidden = true
+  byId('open-draw-result').hidden = false
   drawnStations.add(drawResult)
   const previous = recentDraws.indexOf(drawResult)
   if (previous !== -1) recentDraws.splice(previous, 1)
@@ -2105,8 +2427,6 @@ function revealResult() {
 
 function drawStation(previousWinner = null, trigger = null) {
   if (drawing) return
-  clearDrawMotion()
-  for (const animation of byId('draw-reel').getAnimations?.() ?? []) animation.cancel()
   const candidates = eligibleStations()
   if (!reveal.open) drawOrigin = candidates.includes(previousWinner) ? previousWinner : null
   const eligible = candidates.filter((station) => station !== drawOrigin)
@@ -2123,6 +2443,7 @@ function drawStation(previousWinner = null, trigger = null) {
   if (trigger) drawTrigger = trigger
   refreshDrawPool()
   byId('open-draw-result').disabled = true
+  byId('open-draw-result').hidden = true
   byId('draw-announcement').textContent = ''
   byId('draw-station').setAttribute('aria-hidden', 'true')
   byId('draw-line').setAttribute('aria-hidden', 'true')
@@ -2136,56 +2457,49 @@ function drawStation(previousWinner = null, trigger = null) {
   byId('draw-origin').hidden = true
   reveal.classList.remove('landed')
   reveal.style.removeProperty('--draw-color')
-  byId('draw-status').children[0].textContent = '다음 역은…'
-  byId('draw-status').children[1].textContent = '어디일까?'
-  byId('draw-lead').textContent = '둘만의 목적지를 찾고 있어요.'
-  byId('draw-caption').textContent = '두근두근, 잠시만 기다려 주세요.'
+  byId('draw-status').textContent = '다음 역은…'
   if (!reveal.open) {
     recentDraws.length = 0
     reveal.returnValue = ''
     reveal.showModal()
   }
   byId('recent-draws').hidden = true
-  byId('redraw').disabled = true
+  byId('redraw').hidden = true
   reveal.scrollTop = 0
-  showTicket(drawResult)
-  byId('draw-line').textContent = '목적지를 찾는 중'
 
-  const reel = byId('draw-reel')
-  if (motionPreference.matches || pool.length === 1 || typeof reel.animate !== 'function') {
+  if (motionPreference.matches || pool.length === 1) {
     revealResult()
     return
   }
 
   byId('skip-draw').hidden = false
   byId('draw-announcement').textContent = '역을 뽑는 중이에요.'
-  reveal.style.setProperty('--draw-duration', '2000ms')
+  const delays = [95, 100, 110, 130, 155, 190, 250, 325, 420]
+  reveal.style.setProperty('--draw-duration', delays.reduce((total, delay) => total + delay, 0) + 'ms')
+  let frame = 0
   const previews = pool.length === 2 ? pool : pool.filter((station) => station !== drawResult)
   let lastPreview = null
   let unseenPreviews = [...previews]
-  const rows = []
-  for (let frame = 0; frame < 18; frame += 1) {
+  const stationLabel = byId('draw-station')
+  function spin() {
+    if (!reveal.open) return
+    if (frame === delays.length) {
+      revealResult()
+      return
+    }
     if (!unseenPreviews.length) unseenPreviews = [...previews]
-    const options = unseenPreviews.filter((station) => station !== lastPreview)
-    if (!options.length) unseenPreviews = previews.filter((station) => station !== lastPreview)
-    const choices = unseenPreviews.filter((station) => station !== lastPreview)
-    const choice = choices[Math.floor(Math.random() * choices.length)]
-    const index = unseenPreviews.indexOf(choice)
+    let index = Math.floor(Math.random() * unseenPreviews.length)
+    if (unseenPreviews[index] === lastPreview) index = (index + 1) % unseenPreviews.length
     lastPreview = unseenPreviews.splice(index, 1)[0]
-    const row = document.createElement('p')
-    row.className = 'draw-preview-row'
-    row.setAttribute('aria-hidden', 'true')
-    row.textContent = stationDisplayName(lastPreview)
-    row.style.setProperty('--chars', [...row.textContent].length)
-    rows.push(row)
+    showTicket(lastPreview, true)
+    stationLabel.animate?.([
+      { opacity: .58, transform: 'translateY(4px)' },
+      { opacity: 1, transform: 'translateY(0)' },
+    ], { duration: Math.min(delays[frame], 140), easing: 'ease-out' })
+    drawTimer = setTimeout(spin, delays[frame])
+    frame += 1
   }
-  reel.prepend(...rows)
-  reveal.classList.add('spinning')
-  drawAnimation = reel.animate([
-    { transform: `translateY(${-100 * 1.5 / 21}%)` },
-    { transform: `translateY(${-100 * 19.5 / 21}%)` },
-  ], { duration: 2000, easing: 'cubic-bezier(.2,.65,.35,1)', fill: 'forwards' })
-  drawAnimation.onfinish = revealResult
+  spin()
 }
 
 function nearbyCourseParams(station) {
@@ -2198,14 +2512,21 @@ function nearbyCourseParams(station) {
 }
 
 function finishDraw() {
-  clearDrawMotion()
-  for (const animation of byId('draw-reel').getAnimations?.() ?? []) animation.cancel()
+  for (const animation of byId('draw-station').getAnimations?.() ?? []) animation.cancel()
   byId('skip-draw').hidden = true
   const winner = reveal.returnValue === 'course' ? drawResult : null
+  clearTimeout(drawTimer)
+  drawTimer = null
   drawResult = null
   drawing = false
   refreshDrawPool()
   if (winner) {
+    const url = new URL(location.href)
+    url.search = ''
+    url.hash = ''
+    url.searchParams.set('course', winner.id)
+    history.pushState(null, '', url)
+    setCoursePage(true)
     selectStation(winner, true, true, null, byId('nearby-course').checked)
   }
   else drawTrigger?.focus({ preventScroll: true })
@@ -2213,6 +2534,11 @@ function finishDraw() {
   drawOrigin = null
 }
 
+byId('redraw').addEventListener('click', () => {
+  drawing = false
+  byId('dismiss-draw').focus()
+  drawStation(recentDraws[0])
+})
 byId('skip-draw').addEventListener('click', revealResult)
 byId('open-draw-result').addEventListener('click', () => reveal.close('course'))
 byId('dismiss-draw').addEventListener('click', () => reveal.close())
@@ -2228,27 +2554,56 @@ function zoom(factor, x = controls.width / 2, y = controls.height / 2) {
   drawMap()
 }
 
+byId('restore-omitted').addEventListener('click', () => {
+  if (!selected) return
+  const restored = visitOrder().filter((key) => omittedStops.has(key))
+  if (!restored.length) return
+  for (const key of restored) omissionSetters.get(key)(false)
+  renderSharedCourseChanges()
+  clearShareFeedback()
+  renderCourseMap(selected)
+  saveDraft(selected)
+  const status = byId('course-restore-status')
+  status.textContent = `${restored.length}개 분류를 다시 넣었어요.`
+  status.hidden = false
+  focusCourseStop(restored[0])
+})
+
 byId('reset-course').addEventListener('click', () => {
   if (!selected || !window.confirm('이 역에서 변경한 장소와 설정을 기본값으로 되돌릴까요?')) return
+  customFormDrafts.clear()
   renderCourse(selected, stationMapQuery(selected), null)
   clearShareFeedback()
-  saveDraft(selected, false)
+  const saved = saveDraft(selected, false)
   if (viewingSharedCourse) {
     byId('share-status').textContent = '열어 본 코스를 기본값으로 되돌렸어요.'
     return
   }
+  if (!saved) {
+    byId('share-status').textContent = '화면만 기본 코스로 되돌렸어요. 아직 저장하지 못했어요.'
+    return
+  }
   try {
-    const remaining = editedCourseIds().filter((id) => id !== selected.id)
+    const ids = editedCourseIds()
+    if (ids === null) throw new Error('Saved-course list could not be read')
+    const remaining = ids.filter((id) => id !== selected.id)
     localStorage.setItem(editedCoursesKey, JSON.stringify(remaining))
   } catch {
-    // The visible course was already reset.
+    showStorageRecovery('metadata')
   }
   renderSavedCourses()
   byId('share-status').textContent = '기본 코스로 되돌렸어요.'
 })
 
 byId('open-local-course').addEventListener('click', () => {
-  if (selected && viewingSharedCourse) selectStation(selected, true)
+  if (selected && viewingSharedCourse) {
+    if (byId('result').classList.contains('course-page')) {
+      const url = new URL(location.href)
+      url.search = new URLSearchParams({ course: selected.id }).toString()
+      history.pushState(history.state, '', url.href)
+    }
+    selectStation(selected, true)
+  }
 })
 
 byId('open-updated-course').addEventListener('click', () => {
@@ -2257,6 +2612,8 @@ byId('open-updated-course').addEventListener('click', () => {
 
 byId('save-shared-course').addEventListener('click', () => {
   if (!selected) return
+  const savingCurrent = (openedSharedCourse !== null && courseParams().toString() !== openedSharedCourse)
+    || !byId('shared-course-changes').hidden
   clearShareFeedback()
   const saved = saveDraft(selected, true, true)
   const status = byId('share-status')
@@ -2268,10 +2625,15 @@ byId('save-shared-course').addEventListener('click', () => {
     const url = new URL(location.href)
     url.searchParams.delete('station')
     for (const key of courseQueryKeys) url.searchParams.delete(key)
+    if (byId('result').classList.contains('course-page')) {
+      url.searchParams.delete('view')
+      url.searchParams.set('course', selected.id)
+    }
     history.replaceState(history.state, '', url.href)
-    status.textContent = '받은 코스를 이 기기에 저장했어요.'
+    status.textContent = savingCurrent ? '현재 코스를 이 기기에 저장했어요.' : '받은 코스를 이 기기에 저장했어요.'
     status.focus({ preventScroll: true })
     byId('shared-course-actions').hidden = true
+    updateCourseContext()
   } else {
     status.textContent = '이 기기에 코스를 저장하지 못했어요. 코스 링크를 복사해 보관할 수 있어요.'
   }
@@ -2282,9 +2644,48 @@ function sharedCourseUrl() {
   url.search = ''
   url.hash = ''
   url.searchParams.set('station', selected.id)
+  if (byId('result').classList.contains('course-page')) url.searchParams.set('view', 'course')
   for (const [key, value] of courseParams({ includePreferences: false, preserveUnresolved: false })) url.searchParams.set(key, value)
   return url.href
 }
+
+function recoveryCourseUrl() {
+  const url = new URL(location.href)
+  url.search = new URLSearchParams({ station: selected.id, view: 'course', ...Object.fromEntries(courseParams()) }).toString()
+  url.hash = ''
+  return url.href
+}
+
+byId('copy-recovery-link').addEventListener('click', (event) => {
+  if (selected) copyResult(recoveryCourseUrl(), '링크', event.currentTarget)
+})
+byId('copy-recovery-text').addEventListener('click', (event) => {
+  if (selected) copyResult(courseText({ includeCourseLink: false }) + '\n\n복구용 링크\n' + recoveryCourseUrl(), '코스 텍스트', event.currentTarget)
+})
+byId('retry-course-storage').addEventListener('click', () => {
+  if (!selected) return
+  const retryKind = byId('storage-recovery').dataset.kind
+  if (retryKind === 'read') {
+    readDraft(selected.id)
+    if (draftReadFailed) return
+    try { localStorage.getItem(editedCoursesKey) }
+    catch { showStorageRecovery('read'); return }
+    byId('storage-recovery').hidden = true
+    renderSavedCourses()
+    if (viewingSharedCourse) {
+      refreshSharedSaveActions()
+      byId('share-status').textContent = '이 기기의 저장본을 다시 확인했어요.'
+      focusSection(byId('share-status'))
+    }
+    else selectStation(selected, true)
+  } else if (viewingSharedCourse) byId('save-shared-course').click()
+  else if (saveDraft(selected)) {
+    byId('share-status').textContent = !byId('storage-recovery').hidden
+      ? '코스는 저장했지만 최근 저장 목록을 아직 갱신하지 못했어요.'
+      : retryKind === 'metadata' ? '최근 저장 목록을 갱신했어요.' : '현재 코스를 이 기기에 저장했어요.'
+    focusSection(byId('share-status'))
+  }
+})
 
 byId('share-station').addEventListener('click', (event) => {
   if (!selected) return
@@ -2330,7 +2731,7 @@ function courseText({ includeCourseLink = true } = {}) {
   else if (courseSelection.size) header.push('직선 거리를 계산할 수 있는 구간이 없어요.')
   const activeStops = visitOrder().filter((key) => !omittedStops.has(key))
   const pendingStops = activeStops.length - courseSelection.size
-  if (pendingStops) header.push(`선택한 장소 ${courseSelection.size}곳 · 장소를 고를 항목 ${pendingStops}개`)
+  if (pendingStops) header.push(`선택한 장소 ${courseSelection.size}곳 · 후보 없는 항목 ${pendingStops}개`)
   const selectedStops = [...courseSelection.values()]
   const transitStops = selectedStops.filter((stop) => stop.access === 'transit').length
   if (transitStops) header.push(`대중교통으로 이동할 장소 ${transitStops}곳`)
@@ -2385,7 +2786,7 @@ function clearShareFeedback() {
 function dismissManualCopy() {
   const trigger = manualCopyTrigger
   clearShareFeedback()
-  if (trigger && (trigger.id === 'share-course-primary' || byId('course-tools').open)) trigger.focus()
+  if (trigger && (trigger.id === 'share-course-primary' || byId('course-tools').open || (byId('storage-recovery').contains(trigger) && !byId('storage-recovery').hidden))) trigger.focus()
   else byId('course-tools').querySelector('summary').focus()
 }
 
@@ -2423,10 +2824,13 @@ async function copyResult(value, label, trigger) {
   }
 }
 
-byId('open-settings').addEventListener('click', () => drawSettings.showModal())
+for (const id of ['open-settings', 'course-open-settings']) {
+  byId(id).addEventListener('click', () => drawSettings.showModal())
+}
 
 byId('show-all').addEventListener('click', () => setAll(true))
 byId('hide-all').addEventListener('click', () => setAll(false))
+byId('draw').addEventListener('click', (event) => drawStation(null, event.currentTarget))
 byId('draw-from-course').addEventListener('click', (event) => drawStation(selected, event.currentTarget))
 for (const id of ['complete-course', 'nearby-course']) {
   byId(id).addEventListener('change', () => {
@@ -2449,10 +2853,18 @@ byId('center-station').addEventListener('click', () => {
 })
 byId('show-station-on-map').addEventListener('click', () => {
   if (!selected) return
+  if (byId('draw-page').hidden) returnToDraw()
   keyboardStation = selected
   centerStation(selected)
   drawMap()
   focusSection(markers.get(selected.id).marker)
+})
+byId('open-saved-courses').addEventListener('click', () => {
+  const saved = byId('saved-courses')
+  if (saved.hidden) return
+  if (byId('draw-page').hidden) returnToDraw()
+  saved.open = true
+  focusSection(saved.querySelector('summary'))
 })
 function fitMapArea(stationList) {
   fitNetwork(stationList)
@@ -2565,15 +2977,61 @@ new ResizeObserver(([entry]) => {
 }).observe(map)
 restoreDrawPreferences()
 renderSavedCourses()
-const sharedParams = new URLSearchParams(location.search)
-const linkedStation = stations.get(sharedParams.get('station'))
 refreshFilters()
-if (linkedStation) {
-  selectStation(linkedStation, true, false, sharedParams)
-} else if (sharedParams.has('station')) {
-  byId('invalid-course-link').hidden = false
-} else {
-  const draft = readDraft()
-  const draftStation = draft && stations.get(draft.station)
-  if (draftStation) selectStation(draftStation, true, false)
+
+function setCoursePage(open) {
+  closeMapPlace()
+  if (!open) renderNaverCourseMap(null)
+  byId('draw-page').hidden = open
+  byId('result').classList.toggle('course-page', open)
+  byId('station-name').setAttribute('aria-level', open ? '1' : '2')
+  byId('back-to-draw').parentElement.hidden = !open
 }
+
+function returnToDraw() {
+  courseActionReturn = null
+  byId('return-to-course-editor').hidden = true
+  const url = new URL(location.href)
+  url.search = ''
+  url.hash = ''
+  history.pushState(null, '', url)
+  setCoursePage(false)
+  document.title = appTitle
+  byId('result').hidden = true
+  window.scrollTo(0, 0)
+  byId('draw').focus({ preventScroll: true })
+}
+
+byId('back-to-draw').addEventListener('click', (event) => {
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  event.preventDefault()
+  returnToDraw()
+})
+
+function restorePage(initial = false) {
+  if (reveal.open) {
+    drawTrigger = null
+    reveal.close('')
+    drawing = false
+  }
+  const params = new URLSearchParams(location.search)
+  const localId = params.get('course')
+  const stationId = localId ?? params.get('station')
+  const linkedStation = stations.get(stationId)
+  setCoursePage(Boolean(linkedStation && (localId || params.get('view') === 'course')))
+  if (linkedStation) {
+    selectStation(linkedStation, true, !initial, localId ? null : params)
+    return
+  }
+  byId('invalid-course-link').hidden = stationId === null
+  if (initial && stationId === null) {
+    const draft = readDraft()
+    if (draft) selectStation(stations.get(draft.station), true, false)
+  } else {
+    byId('result').hidden = true
+    document.title = appTitle
+  }
+}
+
+window.addEventListener('popstate', () => restorePage())
+restorePage(true)

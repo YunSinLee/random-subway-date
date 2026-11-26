@@ -12,6 +12,7 @@ export function projectStation(lat, lon) {
 }
 
 export function createBasemap(layer) {
+  const imageNamespace = layer.ownerSVGElement?.namespaceURI
   const images = new Map()
   return ({ x, y, scale, width, height }) => {
     if (width <= 1 || height <= 1) return
@@ -27,20 +28,36 @@ export function createBasemap(layer) {
         visible.add(key)
         let image = images.get(key)
         if (!image) {
-          image = document.createElement('img')
-          image.alt = ''
-          image.draggable = false
-          image.decoding = 'async'
-          image.src = tileUrl.replace('{z}', zoom).replace('{x}', column).replace('{y}', row)
+          const src = tileUrl.replace('{z}', zoom).replace('{x}', column).replace('{y}', row)
+          if (imageNamespace) {
+            image = document.createElementNS(imageNamespace, 'image')
+            image.setAttribute('href', src)
+            image.setAttribute('preserveAspectRatio', 'none')
+          } else {
+            image = document.createElement('img')
+            image.alt = ''
+            image.draggable = false
+            image.decoding = 'async'
+            image.src = src
+          }
           images.set(key, image)
           layer.append(image)
         }
         // Use the same rounded edges for adjacent tiles to avoid hairline gaps.
         const px = Math.round(column * size - left)
         const py = Math.round(row * size - top)
-        image.style.transform = `translate(${px}px, ${py}px)`
-        image.style.width = Math.round((column + 1) * size - left) - px + 'px'
-        image.style.height = Math.round((row + 1) * size - top) - py + 'px'
+        const pixelWidth = Math.round((column + 1) * size - left) - px
+        const pixelHeight = Math.round((row + 1) * size - top) - py
+        if (imageNamespace) {
+          image.setAttribute('x', px)
+          image.setAttribute('y', py)
+          image.setAttribute('width', pixelWidth)
+          image.setAttribute('height', pixelHeight)
+        } else {
+          image.style.transform = `translate(${px}px, ${py}px)`
+          image.style.width = pixelWidth + 'px'
+          image.style.height = pixelHeight + 'px'
+        }
       }
     }
     for (const [key, image] of images) {
