@@ -1316,7 +1316,7 @@ async function main() {
     assert.match(await sharedCafe.locator('div[aria-live]').innerText(), /직접 추가한 장소 · 거리 미확인/)
     await openCourseSettings(recipient)
     await recipient.getByRole('button', { name: '코스 위치 보기 · 장소 2곳 표시' }).click()
-    assert.match(await recipient.locator('#course-map-missing').innerText(), /좌표가 없어.*우리 동네 카페/)
+    assert.match(await recipient.locator('#course-map-missing').innerText(), /좌표가 없어[\s\S]*우리 동네 카페/)
     assert.equal(await recipient.locator(':focus').getAttribute('id'), 'course-location-title')
     const firstMapStop = recipient.locator('.course-map-marker').first()
     await firstMapStop.hover()
